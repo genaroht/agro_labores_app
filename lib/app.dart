@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'core/router/app_router.dart';
+import 'features/sync/data/sync_service.dart';
 
 class AgroLaboresApp extends ConsumerWidget {
   const AgroLaboresApp({super.key});
@@ -9,6 +10,8 @@ class AgroLaboresApp extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final router = ref.watch(appRouterProvider);
+
+    ref.watch(syncAutoStartProvider);
 
     return MaterialApp.router(
       title: 'Agro Labores',

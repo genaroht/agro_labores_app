@@ -125,6 +125,17 @@ class RecordLockRepository {
     );
   }
 
+  Future<void> saveConfigFromServer(RecordLockConfig config) async {
+    final prefs = await SharedPreferences.getInstance();
+
+    final configToSave = config.copyWith(syncStatus: 'sincronizado');
+
+    await prefs.setString(
+      _keyForDepartment(config.departmentId),
+      jsonEncode(configToSave.toJson()),
+    );
+  }
+
   String? validateCanSave({
     required RecordLockConfig config,
     required bool isAdmin,

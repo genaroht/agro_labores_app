@@ -105,6 +105,16 @@ class HomePage extends ConsumerWidget {
                 ],
                 const Divider(height: 1),
                 ListTile(
+                  leading: const Icon(Icons.sync),
+                  title: const Text('Sincronización'),
+                  subtitle: const Text('Subir pendientes y descargar cambios'),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () {
+                    context.push('/sync');
+                  },
+                ),
+                const Divider(height: 1),
+                ListTile(
                   leading: const Icon(Icons.storage),
                   title: const Text('Probar base local'),
                   subtitle: const Text('Insertar y consultar datos offline'),
@@ -112,14 +122,6 @@ class HomePage extends ConsumerWidget {
                   onTap: () {
                     context.push('/debug/database');
                   },
-                ),
-                const Divider(height: 1),
-                ListTile(
-                  leading: const Icon(Icons.sync),
-                  title: const Text('Sincronización'),
-                  subtitle: const Text('Próxima fase: estado offline/online'),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: () {},
                 ),
               ],
             ),

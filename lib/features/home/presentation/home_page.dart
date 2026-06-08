@@ -66,6 +66,20 @@ class HomePage extends ConsumerWidget {
             elevation: 2,
             child: Column(
               children: [
+                if (session.isAdmin) ...[
+                  ListTile(
+                    leading: const Icon(Icons.admin_panel_settings_outlined),
+                    title: const Text('Panel Admin'),
+                    subtitle: const Text(
+                      'Usuarios, catálogos, ubicaciones, bloqueos y registros',
+                    ),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () {
+                      context.push('/admin');
+                    },
+                  ),
+                  const Divider(height: 1),
+                ],
                 ListTile(
                   leading: const Icon(Icons.edit_note),
                   title: const Text('Nuevo registro'),

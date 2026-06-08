@@ -1,6 +1,11 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../features/admin/presentation/admin_catalog_pages.dart';
+import '../../features/admin/presentation/admin_panel_page.dart';
+import '../../features/admin/presentation/admin_records_page.dart';
+import '../../features/admin/presentation/admin_users_page.dart';
 import '../../features/auth/presentation/login_page.dart';
 import '../../features/debug/presentation/database_debug_page.dart';
 import '../../features/departments/presentation/department_selector_page.dart';
@@ -11,12 +16,33 @@ import '../../features/settings/presentation/record_lock_settings_page.dart';
 import '../../features/sync/presentation/sync_page.dart';
 import '../../shared/providers/session_provider.dart';
 
+class RouterRefreshNotifier extends ChangeNotifier {
+  void refresh() {
+    notifyListeners();
+  }
+}
+
+final routerRefreshNotifierProvider = Provider<RouterRefreshNotifier>((ref) {
+  final notifier = RouterRefreshNotifier();
+
+  ref.listen(sessionProvider, (previous, next) {
+    notifier.refresh();
+  });
+
+  ref.onDispose(notifier.dispose);
+
+  return notifier;
+});
+
 final appRouterProvider = Provider<GoRouter>((ref) {
-  final session = ref.watch(sessionProvider);
+  final refreshNotifier = ref.watch(routerRefreshNotifierProvider);
 
   return GoRouter(
     initialLocation: '/login',
+    refreshListenable: refreshNotifier,
     redirect: (context, state) {
+      final session = ref.read(sessionProvider);
+
       if (session.isLoading) {
         return null;
       }
@@ -91,6 +117,46 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         path: '/sync',
         name: 'sync',
         builder: (context, state) => const SyncPage(),
+      ),
+      GoRoute(
+        path: '/admin',
+        name: 'adminPanel',
+        builder: (context, state) => const AdminPanelPage(),
+      ),
+      GoRoute(
+        path: '/admin/users',
+        name: 'adminUsers',
+        builder: (context, state) => const AdminUsersPage(),
+      ),
+      GoRoute(
+        path: '/admin/operators',
+        name: 'adminOperators',
+        builder: (context, state) => const AdminOperatorsPage(),
+      ),
+      GoRoute(
+        path: '/admin/departments',
+        name: 'adminDepartments',
+        builder: (context, state) => const AdminDepartmentsPage(),
+      ),
+      GoRoute(
+        path: '/admin/crops',
+        name: 'adminCrops',
+        builder: (context, state) => const AdminCropsPage(),
+      ),
+      GoRoute(
+        path: '/admin/tasks',
+        name: 'adminTasks',
+        builder: (context, state) => const AdminTasksPage(),
+      ),
+      GoRoute(
+        path: '/admin/locations',
+        name: 'adminLocations',
+        builder: (context, state) => const AdminLocationsPage(),
+      ),
+      GoRoute(
+        path: '/admin/records',
+        name: 'adminRecords',
+        builder: (context, state) => const AdminRecordsPage(),
       ),
       GoRoute(
         path: '/debug/database',

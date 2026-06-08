@@ -7,6 +7,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../../data/local/app_database.dart';
 import '../../../shared/providers/session_provider.dart';
+import '../../settings/data/record_lock_config.dart';
 import '../data/local_record_repository.dart';
 
 class DynamicRecordFormPage extends ConsumerStatefulWidget {
@@ -37,6 +38,7 @@ class _DynamicRecordFormPageState extends ConsumerState<DynamicRecordFormPage> {
   List<FarmRecordLocation> _editingRecordLocations = [];
 
   FarmRecord? _editingRecord;
+  RecordLockConfig? _lockConfig;
 
   String? _selectedOperatorId;
   String? _selectedCropId;
@@ -128,6 +130,7 @@ class _DynamicRecordFormPageState extends ConsumerState<DynamicRecordFormPage> {
 
     try {
       final repository = ref.read(localRecordRepositoryProvider);
+      final lockRepository = ref.read(recordLockRepositoryProvider);
 
       await repository.ensureDemoFormConfig();
 
@@ -139,6 +142,7 @@ class _DynamicRecordFormPageState extends ConsumerState<DynamicRecordFormPage> {
       );
       final crops = await repository.getCrops();
       final tasks = await repository.getTasksForDepartment(activeDepartment.id);
+      final lockConfig = await lockRepository.getConfig(activeDepartment.id);
 
       FarmRecord? record;
       List<FarmRecordLocation> recordLocations = [];
@@ -177,6 +181,7 @@ class _DynamicRecordFormPageState extends ConsumerState<DynamicRecordFormPage> {
         _operators = operators;
         _crops = crops;
         _tasks = tasks;
+        _lockConfig = lockConfig;
         _editingRecord = record;
         _editingRecordLocations = recordLocations;
         _locationsForCrop = locationsForCrop;
@@ -296,9 +301,27 @@ class _DynamicRecordFormPageState extends ConsumerState<DynamicRecordFormPage> {
     if (activeDepartment == null ||
         session.userId == null ||
         session.userCode == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('No hay sesión activa válida.')),
-      );
+      _showMessage('No hay sesión activa válida.');
+      return;
+    }
+
+    final lockRepository = ref.read(recordLockRepositoryProvider);
+    final latestLockConfig = await lockRepository.getConfig(
+      activeDepartment.id,
+    );
+
+    final lockMessage = lockRepository.validateCanSave(
+      config: latestLockConfig,
+      isAdmin: session.isAdmin,
+      now: DateTime.now(),
+    );
+
+    setState(() {
+      _lockConfig = latestLockConfig;
+    });
+
+    if (lockMessage != null) {
+      _showMessage(lockMessage);
       return;
     }
 
@@ -433,6 +456,22 @@ class _DynamicRecordFormPageState extends ConsumerState<DynamicRecordFormPage> {
     }
   }
 
+  String? _currentBlockMessage(AppSession session) {
+    final config = _lockConfig;
+
+    if (config == null) {
+      return null;
+    }
+
+    final repository = ref.read(recordLockRepositoryProvider);
+
+    return repository.validateCanSave(
+      config: config,
+      isAdmin: session.isAdmin,
+      now: DateTime.now(),
+    );
+  }
+
   void _showMessage(String message) {
     ScaffoldMessenger.of(
       context,
@@ -491,6 +530,8 @@ class _DynamicRecordFormPageState extends ConsumerState<DynamicRecordFormPage> {
   Widget build(BuildContext context) {
     final session = ref.watch(sessionProvider);
     final activeDepartmentName = session.activeDepartment?.name ?? '-';
+    final blockMessage = _currentBlockMessage(session);
+    final isBlocked = blockMessage != null;
 
     return Scaffold(
       appBar: AppBar(
@@ -529,11 +570,29 @@ class _DynamicRecordFormPageState extends ConsumerState<DynamicRecordFormPage> {
                       ),
                     ),
                   ),
+                  if (isBlocked) ...[
+                    const SizedBox(height: 16),
+                    Card(
+                      color: Theme.of(context).colorScheme.errorContainer,
+                      child: Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Text(
+                          blockMessage,
+                          style: TextStyle(
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.onErrorContainer,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
                   const SizedBox(height: 16),
                   ..._fieldConfigs.map(_buildField),
                   const SizedBox(height: 24),
                   FilledButton.icon(
-                    onPressed: _isSaving ? null : _save,
+                    onPressed: _isSaving || isBlocked ? null : _save,
                     icon: _isSaving
                         ? const SizedBox(
                             width: 18,

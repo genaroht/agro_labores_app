@@ -89,6 +89,20 @@ class HomePage extends ConsumerWidget {
                     context.push('/records');
                   },
                 ),
+                if (session.isAdmin) ...[
+                  const Divider(height: 1),
+                  ListTile(
+                    leading: const Icon(Icons.lock_clock),
+                    title: const Text('Bloqueo de registros'),
+                    subtitle: const Text(
+                      'Configurar bloqueo global y horario límite',
+                    ),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () {
+                      context.push('/settings/record-lock');
+                    },
+                  ),
+                ],
                 const Divider(height: 1),
                 ListTile(
                   leading: const Icon(Icons.storage),

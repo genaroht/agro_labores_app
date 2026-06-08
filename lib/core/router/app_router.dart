@@ -7,6 +7,7 @@ import '../../features/departments/presentation/department_selector_page.dart';
 import '../../features/home/presentation/home_page.dart';
 import '../../features/records/presentation/dynamic_record_form_page.dart';
 import '../../features/records/presentation/records_list_page.dart';
+import '../../features/settings/presentation/record_lock_settings_page.dart';
 import '../../shared/providers/session_provider.dart';
 
 final appRouterProvider = Provider<GoRouter>((ref) {
@@ -79,6 +80,11 @@ final appRouterProvider = Provider<GoRouter>((ref) {
 
           return DynamicRecordFormPage(recordId: recordId);
         },
+      ),
+      GoRoute(
+        path: '/settings/record-lock',
+        name: 'recordLockSettings',
+        builder: (context, state) => const RecordLockSettingsPage(),
       ),
       GoRoute(
         path: '/debug/database',

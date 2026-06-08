@@ -20,11 +20,16 @@ class RecordFormSaveData {
     required this.taskId,
     required this.taskNameSnapshot,
     required this.taskDetail,
+    required this.lot,
+    required this.network,
     required this.scheduledWage,
     required this.realWage,
+    required this.ha,
+    required this.ratio,
     required this.diningRoom,
     required this.observation,
     required this.extraFields,
+    required this.selectedLocations,
   });
 
   final DateTime recordDate;
@@ -43,13 +48,19 @@ class RecordFormSaveData {
   final String? taskNameSnapshot;
   final String? taskDetail;
 
+  final String? lot;
+  final String? network;
+
   final double? scheduledWage;
   final double? realWage;
+  final double ha;
+  final double? ratio;
 
   final String? diningRoom;
   final String? observation;
 
   final Map<String, dynamic> extraFields;
+  final List<LocationEntry> selectedLocations;
 }
 
 class LocalRecordRepository {
@@ -263,6 +274,23 @@ class LocalRecordRepository {
     return _database.getActiveTasksByDepartment(departmentId);
   }
 
+  Future<List<LocationEntry>> getLocationsForCrop(String cropId) {
+    return _database.getLocationsByCrop(cropId);
+  }
+
+  Future<List<FarmRecordLocation>> getRecordLocations(String recordId) {
+    return (_database.select(_database.recordLocations)
+          ..where(
+            (tbl) => tbl.recordId.equals(recordId) & tbl.deletedAt.isNull(),
+          )
+          ..orderBy([
+            (tbl) => OrderingTerm.asc(tbl.lotSnapshot),
+            (tbl) => OrderingTerm.asc(tbl.networkSnapshot),
+            (tbl) => OrderingTerm.asc(tbl.sectorSnapshot),
+          ]))
+        .get();
+  }
+
   Future<List<FarmRecord>> getRecordsForDepartment({
     required String departmentId,
     required String userId,
@@ -301,33 +329,41 @@ class LocalRecordRepository {
         ? null
         : jsonEncode(data.extraFields);
 
-    await _database
-        .into(_database.records)
-        .insert(
-          RecordsCompanion.insert(
-            id: recordId,
-            recordDate: data.recordDate,
-            weekNumber: data.weekNumber,
-            departmentId: data.departmentId,
-            createdByUserId: data.createdByUserId,
-            userCode: data.userCode,
-            operatorId: Value<String?>(data.operatorId),
-            operatorNameSnapshot: Value<String?>(data.operatorNameSnapshot),
-            cropId: Value<String?>(data.cropId),
-            cropNameSnapshot: Value<String?>(data.cropNameSnapshot),
-            taskId: Value<String?>(data.taskId),
-            taskNameSnapshot: Value<String?>(data.taskNameSnapshot),
-            taskDetail: Value<String?>(data.taskDetail),
-            scheduledWage: Value<double?>(data.scheduledWage),
-            realWage: Value<double?>(data.realWage),
-            diningRoom: Value<String?>(data.diningRoom),
-            observation: Value<String?>(data.observation),
-            extraFieldsJson: Value<String?>(extraFieldsJson),
-            createdAt: Value(now),
-            updatedAt: Value(now),
-            syncStatus: const Value(SyncStatuses.pending),
-          ),
-        );
+    await _database.transaction(() async {
+      await _database
+          .into(_database.records)
+          .insert(
+            RecordsCompanion.insert(
+              id: recordId,
+              recordDate: data.recordDate,
+              weekNumber: data.weekNumber,
+              departmentId: data.departmentId,
+              createdByUserId: data.createdByUserId,
+              userCode: data.userCode,
+              operatorId: Value<String?>(data.operatorId),
+              operatorNameSnapshot: Value<String?>(data.operatorNameSnapshot),
+              cropId: Value<String?>(data.cropId),
+              cropNameSnapshot: Value<String?>(data.cropNameSnapshot),
+              taskId: Value<String?>(data.taskId),
+              taskNameSnapshot: Value<String?>(data.taskNameSnapshot),
+              taskDetail: Value<String?>(data.taskDetail),
+              lot: Value<String?>(data.lot),
+              network: Value<String?>(data.network),
+              scheduledWage: Value<double?>(data.scheduledWage),
+              realWage: Value<double?>(data.realWage),
+              ha: Value<double>(data.ha),
+              ratio: Value<double?>(data.ratio),
+              diningRoom: Value<String?>(data.diningRoom),
+              observation: Value<String?>(data.observation),
+              extraFieldsJson: Value<String?>(extraFieldsJson),
+              createdAt: Value(now),
+              updatedAt: Value(now),
+              syncStatus: const Value(SyncStatuses.pending),
+            ),
+          );
+
+      await _insertRecordLocations(recordId: recordId, data: data, now: now);
+    });
   }
 
   Future<void> updateRecord({
@@ -346,34 +382,82 @@ class LocalRecordRepository {
       throw Exception('No puede editar registros de otro usuario.');
     }
 
+    final now = DateTime.now();
     final extraFieldsJson = data.extraFields.isEmpty
         ? null
         : jsonEncode(data.extraFields);
 
-    await (_database.update(
-      _database.records,
-    )..where((tbl) => tbl.id.equals(recordId))).write(
-      RecordsCompanion(
-        recordDate: Value(data.recordDate),
-        weekNumber: Value(data.weekNumber),
-        departmentId: Value(data.departmentId),
-        userCode: Value(data.userCode),
-        operatorId: Value<String?>(data.operatorId),
-        operatorNameSnapshot: Value<String?>(data.operatorNameSnapshot),
-        cropId: Value<String?>(data.cropId),
-        cropNameSnapshot: Value<String?>(data.cropNameSnapshot),
-        taskId: Value<String?>(data.taskId),
-        taskNameSnapshot: Value<String?>(data.taskNameSnapshot),
-        taskDetail: Value<String?>(data.taskDetail),
-        scheduledWage: Value<double?>(data.scheduledWage),
-        realWage: Value<double?>(data.realWage),
-        diningRoom: Value<String?>(data.diningRoom),
-        observation: Value<String?>(data.observation),
-        extraFieldsJson: Value<String?>(extraFieldsJson),
-        updatedAt: Value(DateTime.now()),
-        syncStatus: const Value(SyncStatuses.pending),
-      ),
-    );
+    await _database.transaction(() async {
+      await (_database.update(
+        _database.records,
+      )..where((tbl) => tbl.id.equals(recordId))).write(
+        RecordsCompanion(
+          recordDate: Value(data.recordDate),
+          weekNumber: Value(data.weekNumber),
+          departmentId: Value(data.departmentId),
+          userCode: Value(data.userCode),
+          operatorId: Value<String?>(data.operatorId),
+          operatorNameSnapshot: Value<String?>(data.operatorNameSnapshot),
+          cropId: Value<String?>(data.cropId),
+          cropNameSnapshot: Value<String?>(data.cropNameSnapshot),
+          taskId: Value<String?>(data.taskId),
+          taskNameSnapshot: Value<String?>(data.taskNameSnapshot),
+          taskDetail: Value<String?>(data.taskDetail),
+          lot: Value<String?>(data.lot),
+          network: Value<String?>(data.network),
+          scheduledWage: Value<double?>(data.scheduledWage),
+          realWage: Value<double?>(data.realWage),
+          ha: Value<double>(data.ha),
+          ratio: Value<double?>(data.ratio),
+          diningRoom: Value<String?>(data.diningRoom),
+          observation: Value<String?>(data.observation),
+          extraFieldsJson: Value<String?>(extraFieldsJson),
+          updatedAt: Value(now),
+          syncStatus: const Value(SyncStatuses.pending),
+        ),
+      );
+
+      await (_database.update(_database.recordLocations)..where(
+            (tbl) => tbl.recordId.equals(recordId) & tbl.deletedAt.isNull(),
+          ))
+          .write(
+            RecordLocationsCompanion(
+              deletedAt: Value<DateTime?>(now),
+              updatedAt: Value(now),
+              syncStatus: const Value(SyncStatuses.pending),
+            ),
+          );
+
+      await _insertRecordLocations(recordId: recordId, data: data, now: now);
+    });
+  }
+
+  Future<void> _insertRecordLocations({
+    required String recordId,
+    required RecordFormSaveData data,
+    required DateTime now,
+  }) async {
+    for (var index = 0; index < data.selectedLocations.length; index++) {
+      final location = data.selectedLocations[index];
+
+      await _database
+          .into(_database.recordLocations)
+          .insert(
+            RecordLocationsCompanion.insert(
+              id: 'record_location_${recordId}_${index}_${now.microsecondsSinceEpoch}',
+              recordId: recordId,
+              locationId: location.id,
+              cropNameSnapshot: data.cropNameSnapshot ?? '',
+              lotSnapshot: location.lot,
+              networkSnapshot: location.network,
+              sectorSnapshot: location.sector,
+              haSnapshot: location.ha,
+              createdAt: Value(now),
+              updatedAt: Value(now),
+              syncStatus: const Value(SyncStatuses.pending),
+            ),
+          );
+    }
   }
 
   Future<void> deleteRecordAsAdmin({

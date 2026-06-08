@@ -202,6 +202,8 @@ class _RecordsListPageState extends ConsumerState<RecordsListPage> {
                     ),
                     subtitle: Text(
                       'Fecha: ${_formatDate(record.recordDate)} | Semana: ${record.weekNumber}\n'
+                      'Cultivo: ${record.cropNameSnapshot ?? '-'} | Lote: ${record.lot ?? '-'} | Red: ${record.network ?? '-'}\n'
+                      'Ha: ${record.ha.toStringAsFixed(2)} | Ratio: ${record.ratio?.toStringAsFixed(2) ?? '-'}\n'
                       'Operario: ${record.operatorNameSnapshot ?? '-'} | Estado: ${record.syncStatus}',
                     ),
                     isThreeLine: true,

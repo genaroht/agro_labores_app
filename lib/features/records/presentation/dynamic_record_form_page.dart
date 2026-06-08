@@ -24,6 +24,7 @@ class _DynamicRecordFormPageState extends ConsumerState<DynamicRecordFormPage> {
 
   bool _isLoading = false;
   bool _isSaving = false;
+  bool _isLoadingLocations = false;
   String? _message;
 
   DateTime _recordDate = DateTime.now();
@@ -32,16 +33,67 @@ class _DynamicRecordFormPageState extends ConsumerState<DynamicRecordFormPage> {
   List<FarmOperator> _operators = [];
   List<Crop> _crops = [];
   List<FarmTask> _tasks = [];
+  List<LocationEntry> _locationsForCrop = [];
+  List<FarmRecordLocation> _editingRecordLocations = [];
 
   FarmRecord? _editingRecord;
 
   String? _selectedOperatorId;
   String? _selectedCropId;
   String? _selectedTaskId;
+  String? _selectedLot;
+  String? _selectedNetwork;
 
+  final Set<String> _selectedLocationIds = {};
   final Map<String, TextEditingController> _controllers = {};
 
   bool get _isEditing => widget.recordId != null;
+
+  bool get _hasCropField {
+    return _fieldConfigs.any((field) => field.fieldKey == 'cropId');
+  }
+
+  List<LocationEntry> get _selectedLocations {
+    return _locationsForCrop
+        .where((location) => _selectedLocationIds.contains(location.id))
+        .toList();
+  }
+
+  double get _totalHa {
+    var total = 0.0;
+
+    for (final location in _selectedLocations) {
+      total += location.ha;
+    }
+
+    return total;
+  }
+
+  double? get _calculatedRatio {
+    final realWage = _readDouble('realWage');
+
+    if (realWage == null || _totalHa <= 0) {
+      return null;
+    }
+
+    return realWage / _totalHa;
+  }
+
+  String? get _suggestedDiningRoom {
+    final suggestions = _selectedLocations
+        .map((location) => location.suggestedDiningRoom)
+        .whereType<String>()
+        .map((value) => value.trim())
+        .where((value) => value.isNotEmpty)
+        .toSet()
+        .toList();
+
+    if (suggestions.isEmpty) {
+      return null;
+    }
+
+    return suggestions.join(' / ');
+  }
 
   @override
   void initState() {
@@ -89,6 +141,8 @@ class _DynamicRecordFormPageState extends ConsumerState<DynamicRecordFormPage> {
       final tasks = await repository.getTasksForDepartment(activeDepartment.id);
 
       FarmRecord? record;
+      List<FarmRecordLocation> recordLocations = [];
+      List<LocationEntry> locationsForCrop = [];
 
       if (_isEditing) {
         record = await repository.getRecordById(widget.recordId!);
@@ -104,6 +158,14 @@ class _DynamicRecordFormPageState extends ConsumerState<DynamicRecordFormPage> {
         if (!session.isAdmin && record.createdByUserId != session.userId) {
           throw Exception('No puede editar registros de otro usuario.');
         }
+
+        recordLocations = await repository.getRecordLocations(record.id);
+
+        if (record.cropId != null) {
+          locationsForCrop = await repository.getLocationsForCrop(
+            record.cropId!,
+          );
+        }
       }
 
       if (!mounted) {
@@ -116,6 +178,8 @@ class _DynamicRecordFormPageState extends ConsumerState<DynamicRecordFormPage> {
         _crops = crops;
         _tasks = tasks;
         _editingRecord = record;
+        _editingRecordLocations = recordLocations;
+        _locationsForCrop = locationsForCrop;
       });
 
       _createControllers();
@@ -156,6 +220,12 @@ class _DynamicRecordFormPageState extends ConsumerState<DynamicRecordFormPage> {
     _selectedOperatorId = record.operatorId;
     _selectedCropId = record.cropId;
     _selectedTaskId = record.taskId;
+    _selectedLot = record.lot;
+    _selectedNetwork = record.network;
+
+    _selectedLocationIds
+      ..clear()
+      ..addAll(_editingRecordLocations.map((item) => item.locationId));
 
     _controllers['taskDetail']?.text = record.taskDetail ?? '';
     _controllers['scheduledWage']?.text =
@@ -173,6 +243,31 @@ class _DynamicRecordFormPageState extends ConsumerState<DynamicRecordFormPage> {
         for (final entry in decoded.entries) {
           _controllers[entry.key]?.text = entry.value?.toString() ?? '';
         }
+      }
+    }
+  }
+
+  Future<void> _loadLocationsForCrop(String cropId) async {
+    setState(() {
+      _isLoadingLocations = true;
+    });
+
+    try {
+      final repository = ref.read(localRecordRepositoryProvider);
+      final locations = await repository.getLocationsForCrop(cropId);
+
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _locationsForCrop = locations;
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoadingLocations = false;
+        });
       }
     }
   }
@@ -213,6 +308,28 @@ class _DynamicRecordFormPageState extends ConsumerState<DynamicRecordFormPage> {
       return;
     }
 
+    if (_hasCropField) {
+      if (_selectedCropId == null) {
+        _showMessage('Seleccione cultivo.');
+        return;
+      }
+
+      if (_selectedLot == null) {
+        _showMessage('Seleccione lote.');
+        return;
+      }
+
+      if (_selectedNetwork == null) {
+        _showMessage('Seleccione red.');
+        return;
+      }
+
+      if (_selectedLocationIds.isEmpty) {
+        _showMessage('Seleccione uno o más sectores.');
+        return;
+      }
+    }
+
     setState(() {
       _isSaving = true;
     });
@@ -220,15 +337,21 @@ class _DynamicRecordFormPageState extends ConsumerState<DynamicRecordFormPage> {
     try {
       final repository = ref.read(localRecordRepositoryProvider);
 
-      final selectedOperator = _operators
-          .where((item) => item.id == _selectedOperatorId)
-          .firstOrNull;
-      final selectedCrop = _crops
-          .where((item) => item.id == _selectedCropId)
-          .firstOrNull;
-      final selectedTask = _tasks
-          .where((item) => item.id == _selectedTaskId)
-          .firstOrNull;
+      final selectedOperator = _findById<FarmOperator>(
+        _operators,
+        _selectedOperatorId,
+        (item) {
+          return item.id;
+        },
+      );
+
+      final selectedCrop = _findById<Crop>(_crops, _selectedCropId, (item) {
+        return item.id;
+      });
+
+      final selectedTask = _findById<FarmTask>(_tasks, _selectedTaskId, (item) {
+        return item.id;
+      });
 
       final extraFields = <String, dynamic>{};
 
@@ -259,11 +382,16 @@ class _DynamicRecordFormPageState extends ConsumerState<DynamicRecordFormPage> {
         taskId: _selectedTaskId,
         taskNameSnapshot: selectedTask?.name,
         taskDetail: _readText('taskDetail'),
+        lot: _selectedLot,
+        network: _selectedNetwork,
         scheduledWage: _readDouble('scheduledWage'),
         realWage: _readDouble('realWage'),
+        ha: _totalHa,
+        ratio: _calculatedRatio,
         diningRoom: _readText('diningRoom'),
         observation: _readText('observation'),
         extraFields: extraFields,
+        selectedLocations: _selectedLocations,
       );
 
       if (_isEditing) {
@@ -295,11 +423,7 @@ class _DynamicRecordFormPageState extends ConsumerState<DynamicRecordFormPage> {
         return;
       }
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(error.toString().replaceFirst('Exception: ', '')),
-        ),
-      );
+      _showMessage(error.toString().replaceFirst('Exception: ', ''));
     } finally {
       if (mounted) {
         setState(() {
@@ -307,6 +431,26 @@ class _DynamicRecordFormPageState extends ConsumerState<DynamicRecordFormPage> {
         });
       }
     }
+  }
+
+  void _showMessage(String message) {
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  T? _findById<T>(List<T> items, String? id, String Function(T item) getId) {
+    if (id == null) {
+      return null;
+    }
+
+    for (final item in items) {
+      if (getId(item) == id) {
+        return item;
+      }
+    }
+
+    return null;
   }
 
   String? _readText(String key) {
@@ -417,7 +561,9 @@ class _DynamicRecordFormPageState extends ConsumerState<DynamicRecordFormPage> {
         return _buildOperatorField(field);
 
       case 'cropId':
-        return _buildCropField(field);
+        return Column(
+          children: [_buildCropField(field), _buildLocationSection()],
+        );
 
       case 'taskId':
         return _buildTaskField(field);
@@ -430,6 +576,9 @@ class _DynamicRecordFormPageState extends ConsumerState<DynamicRecordFormPage> {
           inputFormatters: [
             FilteringTextInputFormatter.allow(RegExp(r'[0-9,.]')),
           ],
+          onChanged: (_) {
+            setState(() {});
+          },
         );
 
       case 'observation':
@@ -443,6 +592,9 @@ class _DynamicRecordFormPageState extends ConsumerState<DynamicRecordFormPage> {
             inputFormatters: [
               FilteringTextInputFormatter.allow(RegExp(r'[0-9,.]')),
             ],
+            onChanged: (_) {
+              setState(() {});
+            },
           );
         }
 
@@ -520,10 +672,18 @@ class _DynamicRecordFormPageState extends ConsumerState<DynamicRecordFormPage> {
                   DropdownMenuItem(value: crop.id, child: Text(crop.name)),
             )
             .toList(),
-        onChanged: (value) {
+        onChanged: (value) async {
           setState(() {
             _selectedCropId = value;
+            _selectedLot = null;
+            _selectedNetwork = null;
+            _selectedLocationIds.clear();
+            _locationsForCrop = [];
           });
+
+          if (value != null) {
+            await _loadLocationsForCrop(value);
+          }
         },
         validator: (value) {
           if (field.isRequired && value == null) {
@@ -534,6 +694,230 @@ class _DynamicRecordFormPageState extends ConsumerState<DynamicRecordFormPage> {
         },
       ),
     );
+  }
+
+  Widget _buildLocationSection() {
+    if (_selectedCropId == null) {
+      return const Padding(
+        padding: EdgeInsets.only(bottom: 16),
+        child: Card(
+          child: Padding(
+            padding: EdgeInsets.all(16),
+            child: Text(
+              'Seleccione un cultivo para cargar lotes, redes y sectores.',
+            ),
+          ),
+        ),
+      );
+    }
+
+    if (_isLoadingLocations) {
+      return const Padding(
+        padding: EdgeInsets.only(bottom: 16),
+        child: Center(child: CircularProgressIndicator()),
+      );
+    }
+
+    if (_locationsForCrop.isEmpty) {
+      return const Padding(
+        padding: EdgeInsets.only(bottom: 16),
+        child: Card(
+          child: Padding(
+            padding: EdgeInsets.all(16),
+            child: Text('No hay ubicaciones configuradas para este cultivo.'),
+          ),
+        ),
+      );
+    }
+
+    return Column(
+      children: [
+        _buildLotField(),
+        _buildNetworkField(),
+        _buildSectorsField(),
+        _buildHaRatioSummary(),
+      ],
+    );
+  }
+
+  Widget _buildLotField() {
+    final lots = _locationsForCrop.map((item) => item.lot).toSet().toList()
+      ..sort();
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16),
+      child: DropdownButtonFormField<String>(
+        initialValue: _selectedLot,
+        decoration: const InputDecoration(
+          labelText: 'Lote *',
+          prefixIcon: Icon(Icons.map_outlined),
+        ),
+        items: lots
+            .map((lot) => DropdownMenuItem(value: lot, child: Text(lot)))
+            .toList(),
+        onChanged: (value) {
+          setState(() {
+            _selectedLot = value;
+            _selectedNetwork = null;
+            _selectedLocationIds.clear();
+          });
+        },
+      ),
+    );
+  }
+
+  Widget _buildNetworkField() {
+    final networks =
+        _locationsForCrop
+            .where((item) => item.lot == _selectedLot)
+            .map((item) => item.network)
+            .toSet()
+            .toList()
+          ..sort();
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16),
+      child: DropdownButtonFormField<String>(
+        initialValue: _selectedNetwork,
+        decoration: const InputDecoration(
+          labelText: 'Red *',
+          prefixIcon: Icon(Icons.hub_outlined),
+        ),
+        items: networks
+            .map(
+              (network) =>
+                  DropdownMenuItem(value: network, child: Text(network)),
+            )
+            .toList(),
+        onChanged: _selectedLot == null
+            ? null
+            : (value) {
+                setState(() {
+                  _selectedNetwork = value;
+                  _selectedLocationIds.clear();
+                });
+              },
+      ),
+    );
+  }
+
+  Widget _buildSectorsField() {
+    final sectors =
+        _locationsForCrop
+            .where(
+              (item) =>
+                  item.lot == _selectedLot && item.network == _selectedNetwork,
+            )
+            .toList()
+          ..sort((a, b) => a.sector.compareTo(b.sector));
+
+    if (_selectedLot == null || _selectedNetwork == null) {
+      return const Padding(
+        padding: EdgeInsets.only(bottom: 16),
+        child: Card(
+          child: Padding(
+            padding: EdgeInsets.all(16),
+            child: Text('Seleccione lote y red para ver sectores.'),
+          ),
+        ),
+      );
+    }
+
+    if (sectors.isEmpty) {
+      return const Padding(
+        padding: EdgeInsets.only(bottom: 16),
+        child: Card(
+          child: Padding(
+            padding: EdgeInsets.all(16),
+            child: Text('No hay sectores para la combinación seleccionada.'),
+          ),
+        ),
+      );
+    }
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16),
+      child: Card(
+        child: Column(
+          children: [
+            const ListTile(
+              title: Text('Sectores *'),
+              subtitle: Text('Puede seleccionar uno o varios sectores.'),
+            ),
+            const Divider(height: 1),
+            ...sectors.map(
+              (location) => CheckboxListTile(
+                value: _selectedLocationIds.contains(location.id),
+                title: Text(location.sector),
+                subtitle: Text(
+                  'Ha: ${location.ha.toStringAsFixed(2)}'
+                  '${location.suggestedDiningRoom == null ? '' : ' | Comedor sugerido: ${location.suggestedDiningRoom}'}',
+                ),
+                onChanged: (checked) {
+                  setState(() {
+                    if (checked == true) {
+                      _selectedLocationIds.add(location.id);
+                    } else {
+                      _selectedLocationIds.remove(location.id);
+                    }
+
+                    _applySuggestedDiningRoomIfEmpty();
+                  });
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildHaRatioSummary() {
+    final ratio = _calculatedRatio;
+    final suggestedDiningRoom = _suggestedDiningRoom;
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16),
+      child: Card(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Ha total: ${_totalHa.toStringAsFixed(2)}',
+                style: const TextStyle(fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                ratio == null
+                    ? 'Ratio: ingrese Jornal real y seleccione sectores.'
+                    : 'Ratio: ${ratio.toStringAsFixed(2)}',
+              ),
+              const SizedBox(height: 8),
+              Text(
+                suggestedDiningRoom == null
+                    ? 'Comedor sugerido: -'
+                    : 'Comedor sugerido: $suggestedDiningRoom',
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _applySuggestedDiningRoomIfEmpty() {
+    final suggestion = _suggestedDiningRoom;
+    final controller = _controllers['diningRoom'];
+
+    if (suggestion == null || controller == null) {
+      return;
+    }
+
+    if (controller.text.trim().isEmpty) {
+      controller.text = suggestion;
+    }
   }
 
   Widget _buildTaskField(FormFieldConfig field) {
@@ -555,9 +939,11 @@ class _DynamicRecordFormPageState extends ConsumerState<DynamicRecordFormPage> {
           setState(() {
             _selectedTaskId = value;
 
-            final selectedTask = _tasks
-                .where((task) => task.id == value)
-                .firstOrNull;
+            final selectedTask = _findById<FarmTask>(
+              _tasks,
+              value,
+              (item) => item.id,
+            );
             final detail = selectedTask?.defaultDetail;
 
             if (detail != null && detail.isNotEmpty) {
@@ -581,6 +967,7 @@ class _DynamicRecordFormPageState extends ConsumerState<DynamicRecordFormPage> {
     TextInputType? keyboardType,
     List<TextInputFormatter>? inputFormatters,
     int maxLines = 1,
+    ValueChanged<String>? onChanged,
   }) {
     final controller = _controllers[field.fieldKey] ?? TextEditingController();
 
@@ -593,6 +980,7 @@ class _DynamicRecordFormPageState extends ConsumerState<DynamicRecordFormPage> {
         keyboardType: keyboardType,
         inputFormatters: inputFormatters,
         maxLines: maxLines,
+        onChanged: onChanged,
         decoration: InputDecoration(
           labelText: '${field.label}${field.isRequired ? ' *' : ''}',
         ),

@@ -1,7 +1,8 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/errors/app_error.dart';
 import '../../core/security/local_session_storage.dart';
-
+import '../../data/local/app_database.dart';
 import '../../data/local/database_provider.dart';
 
 class SessionDepartment {
@@ -109,74 +110,31 @@ class SessionNotifier extends Notifier<AppSession> {
       return;
     }
 
+    if (!RegExp(r'^\d{6}$').hasMatch(savedUserCode.trim())) {
+      await _storage.clearSession();
+      state = AppSession.empty;
+      return;
+    }
+
     try {
       final database = ref.read(appDatabaseProvider);
-
-      await database.seedDemoData();
-
-      final user = await database.getUserByCodeIncludingInactive(savedUserCode);
-
-      if (user == null || user.deletedAt != null || !user.isActive) {
-        await _storage.clearSession();
-        state = AppSession.empty;
-        return;
-      }
-
-      final role = await database.getRoleById(user.roleId);
-
-      if (role == null || role.deletedAt != null) {
-        await _storage.clearSession();
-        state = AppSession.empty;
-        return;
-      }
-
-      final departments = await database.getDepartmentsForUserCode(user.code);
-
-      if (departments.isEmpty) {
-        await _storage.clearSession();
-        state = AppSession.empty;
-        return;
-      }
-
-      final sessionDepartments = departments
-          .map(
-            (department) =>
-                SessionDepartment(id: department.id, name: department.name),
-          )
-          .toList();
-
-      final savedActiveDepartmentId = await _storage
-          .getSavedActiveDepartmentId();
-
-      SessionDepartment? activeDepartment;
-
-      if (sessionDepartments.length == 1) {
-        activeDepartment = sessionDepartments.first;
-      } else if (savedActiveDepartmentId != null) {
-        for (final department in sessionDepartments) {
-          if (department.id == savedActiveDepartmentId) {
-            activeDepartment = department;
-            break;
-          }
-        }
-      }
-
-      state = AppSession(
-        isLoading: false,
-        isLoggedIn: true,
-        userId: user.id,
-        userCode: user.code,
-        userName: user.fullName,
-        roleId: role.id,
-        roleName: role.name,
-        isAdmin: role.isAdmin,
-        assignedDepartments: sessionDepartments,
-        activeDepartment: activeDepartment,
+      final session = await _buildSessionFromUser(
+        database: database,
+        userCode: savedUserCode.trim(),
+        savedActiveDepartmentId: await _storage.getSavedActiveDepartmentId(),
       );
 
+      if (session == null) {
+        await _storage.clearSession();
+        state = AppSession.empty;
+        return;
+      }
+
+      state = session;
+
       await _storage.saveSession(
-        userCode: user.code,
-        activeDepartmentId: activeDepartment?.id,
+        userCode: session.userCode!,
+        activeDepartmentId: session.activeDepartment?.id,
       );
     } catch (_) {
       await _storage.clearSession();
@@ -184,51 +142,26 @@ class SessionNotifier extends Notifier<AppSession> {
     }
   }
 
-  Future<void> loginWithCodeAndPin({
+  Future<AppSession?> _buildSessionFromUser({
+    required AppDatabase database,
     required String userCode,
-    required String password,
+    required String? savedActiveDepartmentId,
   }) async {
-    final cleanUserCode = userCode.trim();
-    final cleanPassword = password.trim();
+    final user = await database.getUserByCodeIncludingInactive(userCode);
 
-    if (cleanUserCode.isEmpty) {
-      throw Exception('El código de usuario es obligatorio.');
-    }
-
-    if (!RegExp(r'^\d{6}$').hasMatch(cleanPassword)) {
-      throw Exception('La contraseña debe tener exactamente 6 dígitos.');
-    }
-
-    final database = ref.read(appDatabaseProvider);
-
-    await database.seedDemoData();
-
-    final user = await database.getUserByCodeIncludingInactive(cleanUserCode);
-
-    if (user == null || user.deletedAt != null) {
-      throw Exception('Usuario o contraseña incorrectos.');
-    }
-
-    if (!user.isActive) {
-      throw Exception('El usuario está inactivo.');
-    }
-
-    if (user.passwordPin != cleanPassword) {
-      throw Exception('Usuario o contraseña incorrectos.');
+    if (user == null || user.deletedAt != null || !user.isActive) {
+      return null;
     }
 
     final role = await database.getRoleById(user.roleId);
 
     if (role == null || role.deletedAt != null) {
-      throw Exception('El usuario no tiene un rol válido.');
+      return null;
     }
 
-    final departments = await database.getDepartmentsForUserCode(user.code);
-
-    if (departments.isEmpty) {
-      throw Exception('El usuario no tiene departamentos asignados.');
-    }
-
+    final departments = role.isAdmin
+        ? await database.getActiveDepartments()
+        : await database.getDepartmentsForUserCode(user.code);
     final sessionDepartments = departments
         .map(
           (department) =>
@@ -236,11 +169,30 @@ class SessionNotifier extends Notifier<AppSession> {
         )
         .toList();
 
-    final SessionDepartment? activeDepartment = sessionDepartments.length == 1
-        ? sessionDepartments.first
-        : null;
+    if (!role.isAdmin && sessionDepartments.isEmpty) {
+      return null;
+    }
 
-    state = AppSession(
+    SessionDepartment? activeDepartment;
+
+    if (sessionDepartments.length == 1) {
+      activeDepartment = sessionDepartments.first;
+    } else if (savedActiveDepartmentId != null) {
+      for (final department in sessionDepartments) {
+        if (department.id == savedActiveDepartmentId) {
+          activeDepartment = department;
+          break;
+        }
+      }
+    }
+
+    if (role.isAdmin &&
+        activeDepartment == null &&
+        sessionDepartments.isNotEmpty) {
+      activeDepartment = sessionDepartments.first;
+    }
+
+    return AppSession(
       isLoading: false,
       isLoggedIn: true,
       userId: user.id,
@@ -252,14 +204,71 @@ class SessionNotifier extends Notifier<AppSession> {
       assignedDepartments: sessionDepartments,
       activeDepartment: activeDepartment,
     );
+  }
+
+  Future<void> loginWithCodeAndPin({
+    required String userCode,
+    required String password,
+  }) async {
+    final cleanUserCode = userCode.trim();
+    final cleanPassword = password.trim();
+
+    if (cleanUserCode.isEmpty || cleanPassword.isEmpty) {
+      throw const AppException('Ingrese su código y contraseña.');
+    }
+
+    final database = ref.read(appDatabaseProvider);
+    final user = await database.getUserByCodeIncludingInactive(cleanUserCode);
+
+    if (user == null || user.deletedAt != null) {
+      throw const AppException('Usuario o contraseña incorrectos.');
+    }
+
+    if (!user.isActive) {
+      throw const AppException('El usuario está inactivo.');
+    }
+
+    if (!_constantTimeEquals(user.passwordPin, cleanPassword)) {
+      throw const AppException('Usuario o contraseña incorrectos.');
+    }
+
+    final session = await _buildSessionFromUser(
+      database: database,
+      userCode: cleanUserCode,
+      savedActiveDepartmentId: null,
+    );
+
+    if (session == null) {
+      throw const AppException('El usuario no tiene rol o permisos válidos.');
+    }
+
+    state = session;
 
     await _storage.saveSession(
-      userCode: user.code,
-      activeDepartmentId: activeDepartment?.id,
+      userCode: session.userCode!,
+      activeDepartmentId: session.activeDepartment?.id,
     );
   }
 
+  bool _constantTimeEquals(String left, String right) {
+    if (left.length != right.length) {
+      return false;
+    }
+
+    var difference = 0;
+
+    for (var i = 0; i < left.length; i++) {
+      difference |= left.codeUnitAt(i) ^ right.codeUnitAt(i);
+    }
+
+    return difference == 0;
+  }
+
   Future<void> selectDepartment(String departmentId) async {
+    if (state.isAdmin) {
+      return;
+    }
+
     SessionDepartment? selectedDepartment;
 
     for (final department in state.assignedDepartments) {
@@ -270,7 +279,7 @@ class SessionNotifier extends Notifier<AppSession> {
     }
 
     if (selectedDepartment == null) {
-      throw Exception(
+      throw const AppException(
         'El departamento seleccionado no está asignado al usuario.',
       );
     }
@@ -288,6 +297,10 @@ class SessionNotifier extends Notifier<AppSession> {
   }
 
   Future<void> clearActiveDepartment() async {
+    if (state.isAdmin || state.assignedDepartments.length <= 1) {
+      return;
+    }
+
     state = state.copyWith(clearActiveDepartment: true);
 
     final userCode = state.userCode;

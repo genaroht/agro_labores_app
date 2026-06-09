@@ -52,7 +52,7 @@ class _AdminRecordsPageState extends ConsumerState<AdminRecordsPage> {
     try {
       final repository = ref.read(adminRepositoryProvider);
 
-      await repository.ensureDemoData();
+      await repository.ensureDevelopmentSeedData();
 
       final departments = await repository.getDepartments();
       final crops = await repository.getCrops();
@@ -237,7 +237,9 @@ class _AdminRecordsPageState extends ConsumerState<AdminRecordsPage> {
                           'Fecha: ${_formatDate(record.recordDate)} | Semana: ${record.weekNumber}\n'
                           'Departamento: ${_departmentName(record.departmentId)} | Cultivo: ${record.cropNameSnapshot ?? '-'}\n'
                           'Lote: ${record.lot ?? '-'} | Red: ${record.network ?? '-'} | Ha: ${record.ha.toStringAsFixed(2)} | Ratio: ${record.ratio?.toStringAsFixed(2) ?? '-'}\n'
-                          'Operario: ${record.operatorNameSnapshot ?? '-'} | Estado: ${record.syncStatus}',
+                          'Líder: ${record.leaderNameSnapshot ?? record.operatorNameSnapshot ?? '-'} | '
+                          'Jornal programado: ${_formatNumber(record.scheduledWage)} | '
+                          'Jornal real: ${_formatNumber(record.realWage)} | Estado: ${record.syncStatus}',
                         ),
                         isThreeLine: true,
                         trailing: Wrap(
@@ -363,7 +365,7 @@ class _AdminRecordsPageState extends ConsumerState<AdminRecordsPage> {
             const SizedBox(height: 12),
             DropdownButtonFormField<String>(
               initialValue: _operatorId,
-              decoration: const InputDecoration(labelText: 'Operario'),
+              decoration: const InputDecoration(labelText: 'Líder / persona'),
               items: _operators
                   .map(
                     (item) => DropdownMenuItem(
@@ -471,5 +473,17 @@ class _AdminRecordsPageState extends ConsumerState<AdminRecordsPage> {
     final year = date.year.toString();
 
     return '$day/$month/$year';
+  }
+
+  String _formatNumber(double? value) {
+    if (value == null) {
+      return '-';
+    }
+
+    if (value % 1 == 0) {
+      return value.toStringAsFixed(0);
+    }
+
+    return value.toStringAsFixed(2);
   }
 }

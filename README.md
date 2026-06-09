@@ -1,17 +1,51 @@
-# agro_labores_app
+# Agro Labores App
 
-A new Flutter project.
+App Flutter offline-first para registro de labores agrícolas, personas/operarios, catálogos, reportes y sincronización.
 
-## Getting Started
+## Stack
 
-This project is a starting point for a Flutter application.
+- Flutter + Material 3
+- Riverpod
+- GoRouter
+- Drift / SQLite local
+- Dio
+- SharedPreferences
+- Sincronización local/remota
 
-A few resources to get you started if this is your first Flutter project:
+## Ejecutar en desarrollo
 
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
+```bash
+flutter pub get
+flutter pub run build_runner build --delete-conflicting-outputs
+flutter run --dart-define=ENABLE_DEV_SEED=true
+```
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+Con backend real:
+
+```bash
+flutter run \
+  --dart-define=ENABLE_DEV_SEED=false \
+  --dart-define=API_BASE_URL=https://api.tu-dominio.com
+```
+
+Si `API_BASE_URL` está vacío, la app usa un servidor mock local para probar la cola offline-first.
+
+## Verificaciones recomendadas
+
+```bash
+dart format lib test
+flutter analyze
+flutter test
+```
+
+## Notas de producción
+
+- Reemplazar el PIN local por autenticación real con token seguro.
+- Guardar contraseñas/PIN solo hasheados en backend.
+- Mantener HTTPS obligatorio.
+- Validar permisos en backend por rol y departamento.
+- Revisar migraciones Drift antes de publicar una actualización a usuarios reales.
+
+## Backend
+
+Ver `docs/backend_contract.md` para el contrato mínimo recomendado de API REST y sincronización.

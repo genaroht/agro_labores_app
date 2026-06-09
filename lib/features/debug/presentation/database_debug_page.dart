@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/config/app_environment.dart';
 import '../../../data/local/app_database.dart';
 import '../../../data/local/database_provider.dart';
 
@@ -29,9 +30,15 @@ class _DatabaseDebugPageState extends ConsumerState<DatabaseDebugPage> {
     });
 
     try {
+      if (!AppEnvironment.enableDevelopmentSeed) {
+        throw Exception(
+          'Esta herramienta solo está disponible en modo desarrollo.',
+        );
+      }
+
       final database = ref.read(appDatabaseProvider);
 
-      await database.seedDemoData();
+      await database.seedDevelopmentData();
 
       final usersCount = await database.countUsers();
       final departmentsCount = await database.countDepartments();
@@ -39,7 +46,7 @@ class _DatabaseDebugPageState extends ConsumerState<DatabaseDebugPage> {
       final syncQueueCount = await database.countSyncQueueItems();
 
       final departmentsForUser = await database.getDepartmentsForUserCode(
-        '001',
+        '000001',
       );
 
       if (!mounted) {
@@ -52,7 +59,7 @@ class _DatabaseDebugPageState extends ConsumerState<DatabaseDebugPage> {
         _locationsCount = locationsCount;
         _syncQueueCount = syncQueueCount;
         _departmentsForUser = departmentsForUser;
-        _message = 'Datos de prueba insertados correctamente.';
+        _message = 'Datos de desarrollo insertados correctamente.';
       });
     } catch (error) {
       if (!mounted) {
@@ -86,7 +93,7 @@ class _DatabaseDebugPageState extends ConsumerState<DatabaseDebugPage> {
       final syncQueueCount = await database.countSyncQueueItems();
 
       final departmentsForUser = await database.getDepartmentsForUserCode(
-        '001',
+        '000001',
       );
 
       if (!mounted) {

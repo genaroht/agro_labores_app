@@ -1,5 +1,3 @@
-import 'dart:convert';
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -22,37 +20,45 @@ class DynamicRecordFormPage extends ConsumerStatefulWidget {
 
 class _DynamicRecordFormPageState extends ConsumerState<DynamicRecordFormPage> {
   final _formKey = GlobalKey<FormState>();
+  final _scheduledWageController = TextEditingController();
+  final _realWageController = TextEditingController();
+  final _observationController = TextEditingController();
 
   bool _isLoading = false;
   bool _isSaving = false;
   bool _isLoadingLocations = false;
+  bool _isLoadingDiningRooms = false;
   String? _message;
 
-  DateTime _recordDate = DateTime.now();
+  DateTime _recordDate = DateTime.now().add(const Duration(days: 1));
 
-  List<FormFieldConfig> _fieldConfigs = [];
-  List<FarmOperator> _operators = [];
+  List<Department> _departments = [];
   List<Crop> _crops = [];
+  List<FarmOperator> _leaderOperators = [];
   List<FarmTask> _tasks = [];
   List<LocationEntry> _locationsForCrop = [];
+  List<DiningRoom> _diningRooms = [];
   List<FarmRecordLocation> _editingRecordLocations = [];
 
   FarmRecord? _editingRecord;
+  Department? _selectedDepartment;
   RecordLockConfig? _lockConfig;
 
-  String? _selectedOperatorId;
-  String? _selectedCropId;
+  String? _selectedDepartmentId;
+  String? _selectedLeaderOperatorId;
   String? _selectedTaskId;
+  String? _selectedCropId;
   String? _selectedLot;
   String? _selectedNetwork;
+  String? _selectedDiningRoomId;
 
   final Set<String> _selectedLocationIds = {};
-  final Map<String, TextEditingController> _controllers = {};
 
   bool get _isEditing => widget.recordId != null;
 
-  bool get _hasCropField {
-    return _fieldConfigs.any((field) => field.fieldKey == 'cropId');
+  bool get _isSupervisorRealWageMode {
+    final session = ref.read(sessionProvider);
+    return _isEditing && !session.isAdmin;
   }
 
   List<LocationEntry> get _selectedLocations {
@@ -72,29 +78,37 @@ class _DynamicRecordFormPageState extends ConsumerState<DynamicRecordFormPage> {
   }
 
   double? get _calculatedRatio {
-    final realWage = _readDouble('realWage');
+    final scheduledWage = _readDouble(_scheduledWageController);
 
-    if (realWage == null || _totalHa <= 0) {
+    if (scheduledWage == null || _totalHa <= 0) {
       return null;
     }
 
-    return realWage / _totalHa;
+    return scheduledWage / _totalHa;
   }
 
-  String? get _suggestedDiningRoom {
-    final suggestions = _selectedLocations
-        .map((location) => location.suggestedDiningRoom)
-        .whereType<String>()
-        .map((value) => value.trim())
-        .where((value) => value.isNotEmpty)
-        .toSet()
-        .toList();
+  FarmOperator? get _selectedLeader {
+    return _findById<FarmOperator>(
+      _leaderOperators,
+      _selectedLeaderOperatorId,
+      (item) => item.id,
+    );
+  }
 
-    if (suggestions.isEmpty) {
-      return null;
-    }
+  FarmTask? get _selectedTask {
+    return _findById<FarmTask>(_tasks, _selectedTaskId, (item) => item.id);
+  }
 
-    return suggestions.join(' / ');
+  Crop? get _selectedCrop {
+    return _findById<Crop>(_crops, _selectedCropId, (item) => item.id);
+  }
+
+  DiningRoom? get _selectedDiningRoom {
+    return _findById<DiningRoom>(
+      _diningRooms,
+      _selectedDiningRoomId,
+      (item) => item.id,
+    );
   }
 
   @override
@@ -105,20 +119,18 @@ class _DynamicRecordFormPageState extends ConsumerState<DynamicRecordFormPage> {
 
   @override
   void dispose() {
-    for (final controller in _controllers.values) {
-      controller.dispose();
-    }
-
+    _scheduledWageController.dispose();
+    _realWageController.dispose();
+    _observationController.dispose();
     super.dispose();
   }
 
   Future<void> _loadForm() async {
     final session = ref.read(sessionProvider);
-    final activeDepartment = session.activeDepartment;
 
-    if (activeDepartment == null) {
+    if (session.userId == null || session.userCode == null) {
       setState(() {
-        _message = 'No hay departamento activo.';
+        _message = 'No hay sesión activa válida.';
       });
       return;
     }
@@ -130,23 +142,12 @@ class _DynamicRecordFormPageState extends ConsumerState<DynamicRecordFormPage> {
 
     try {
       final repository = ref.read(localRecordRepositoryProvider);
-      final lockRepository = ref.read(recordLockRepositoryProvider);
 
-      await repository.ensureDemoFormConfig();
+      await repository.ensureDevelopmentFormConfig();
 
-      final fields = await repository.getFieldsForDepartment(
-        activeDepartment.id,
-      );
-      final operators = await repository.getOperatorsForDepartment(
-        activeDepartment.id,
-      );
+      final departments = await repository.getDepartments();
       final crops = await repository.getCrops();
-      final tasks = await repository.getTasksForDepartment(activeDepartment.id);
-      final lockConfig = await lockRepository.getConfig(activeDepartment.id);
-
       FarmRecord? record;
-      List<FarmRecordLocation> recordLocations = [];
-      List<LocationEntry> locationsForCrop = [];
 
       if (_isEditing) {
         record = await repository.getRecordById(widget.recordId!);
@@ -155,21 +156,36 @@ class _DynamicRecordFormPageState extends ConsumerState<DynamicRecordFormPage> {
           throw Exception('El registro no existe.');
         }
 
-        if (record.departmentId != activeDepartment.id) {
-          throw Exception('El registro no pertenece al departamento activo.');
-        }
-
         if (!session.isAdmin && record.createdByUserId != session.userId) {
           throw Exception('No puede editar registros de otro usuario.');
         }
 
-        recordLocations = await repository.getRecordLocations(record.id);
-
-        if (record.cropId != null) {
-          locationsForCrop = await repository.getLocationsForCrop(
-            record.cropId!,
-          );
+        if (!session.isAdmin &&
+            record.departmentId != session.activeDepartment?.id) {
+          throw Exception('Este registro no pertenece al departamento activo.');
         }
+      }
+
+      String? departmentId;
+
+      if (record != null) {
+        departmentId = record.departmentId;
+      } else if (session.isAdmin) {
+        departmentId = _selectedDepartmentId;
+
+        if (departmentId == null && departments.isNotEmpty) {
+          departmentId = departments.first.id;
+        }
+      } else {
+        departmentId = session.activeDepartment?.id;
+      }
+
+      if (departmentId == null) {
+        throw Exception(
+          session.isAdmin
+              ? 'Cree al menos un departamento antes de registrar.'
+              : 'No hay departamento activo.',
+        );
       }
 
       if (!mounted) {
@@ -177,18 +193,12 @@ class _DynamicRecordFormPageState extends ConsumerState<DynamicRecordFormPage> {
       }
 
       setState(() {
-        _fieldConfigs = fields;
-        _operators = operators;
+        _departments = departments;
         _crops = crops;
-        _tasks = tasks;
-        _lockConfig = lockConfig;
         _editingRecord = record;
-        _editingRecordLocations = recordLocations;
-        _locationsForCrop = locationsForCrop;
       });
 
-      _createControllers();
-      _fillEditingValuesIfNeeded();
+      await _loadDepartmentFormData(departmentId: departmentId, record: record);
     } catch (error) {
       if (!mounted) {
         return;
@@ -206,53 +216,157 @@ class _DynamicRecordFormPageState extends ConsumerState<DynamicRecordFormPage> {
     }
   }
 
-  void _createControllers() {
-    for (final field in _fieldConfigs) {
-      if (!_controllers.containsKey(field.fieldKey)) {
-        _controllers[field.fieldKey] = TextEditingController();
+  Future<void> _loadDepartmentFormData({
+    required String departmentId,
+    FarmRecord? record,
+  }) async {
+    final repository = ref.read(localRecordRepositoryProvider);
+    final lockRepository = ref.read(recordLockRepositoryProvider);
+
+    final department = await repository.getDepartmentById(departmentId);
+
+    if (department == null) {
+      throw Exception(
+        'El departamento seleccionado no existe o está inactivo.',
+      );
+    }
+
+    final leaders = await repository.getLeaderOperatorsForDepartment(
+      departmentId,
+    );
+    final tasks = await repository.getTasksForDepartment(departmentId);
+    final lockConfig = await lockRepository.getConfig(departmentId);
+
+    var selectedLeaderId = record?.leaderOperatorId ?? record?.operatorId;
+    var selectedTaskId = record?.taskId;
+    var selectedTask = _findById<FarmTask>(tasks, selectedTaskId, (item) {
+      return item.id;
+    });
+    var selectedCropId =
+        record?.cropId ?? selectedTask?.cropId ?? department.cropId;
+    var selectedLot = record != null && record.lot != null
+        ? AgroLocalValueFormatters.compactLot(record.lot!)
+        : null;
+    var selectedNetwork = record != null && record.network != null
+        ? AgroLocalValueFormatters.compactNetwork(record.network!)
+        : null;
+    var selectedDiningRoomId = record?.diningRoomId;
+
+    List<FarmRecordLocation> recordLocations = [];
+    List<LocationEntry> locationsForCrop = [];
+    List<DiningRoom> diningRooms = [];
+
+    if (record != null) {
+      recordLocations = await repository.getRecordLocations(record.id);
+
+      if (selectedLot == null && recordLocations.isNotEmpty) {
+        selectedLot = AgroLocalValueFormatters.compactLot(
+          recordLocations.first.lotSnapshot,
+        );
+      }
+
+      if (selectedNetwork == null && recordLocations.isNotEmpty) {
+        selectedNetwork = AgroLocalValueFormatters.compactNetwork(
+          recordLocations.first.networkSnapshot,
+        );
       }
     }
+
+    if (selectedCropId != null) {
+      locationsForCrop = await repository.getLocationsForCrop(selectedCropId);
+
+      if (selectedLot != null && selectedNetwork != null) {
+        diningRooms = await repository.getDiningRoomsForCropLotNetwork(
+          cropId: selectedCropId,
+          lot: selectedLot,
+          network: selectedNetwork,
+        );
+
+        if (selectedDiningRoomId == null &&
+            record != null &&
+            record.diningRoom != null) {
+          final recordDiningRoomName = record.diningRoom!.trim().toLowerCase();
+
+          for (final diningRoom in diningRooms) {
+            if (diningRoom.name.trim().toLowerCase() == recordDiningRoomName) {
+              selectedDiningRoomId = diningRoom.id;
+              break;
+            }
+          }
+        }
+      }
+    }
+
+    if (record == null && diningRooms.length == 1) {
+      selectedDiningRoomId = diningRooms.first.id;
+    }
+
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      _selectedDepartment = department;
+      _selectedDepartmentId = department.id;
+      _leaderOperators = leaders;
+      _tasks = tasks;
+      _selectedLeaderOperatorId = selectedLeaderId;
+      _selectedTaskId = selectedTaskId;
+      _selectedCropId = selectedCropId;
+      _selectedLot = selectedLot;
+      _selectedNetwork = selectedNetwork;
+      _selectedDiningRoomId = selectedDiningRoomId;
+      _locationsForCrop = locationsForCrop;
+      _diningRooms = diningRooms;
+      _editingRecordLocations = recordLocations;
+      _lockConfig = lockConfig;
+      if (record != null) {
+        _recordDate = record.recordDate;
+        _selectedLocationIds
+          ..clear()
+          ..addAll(recordLocations.map((item) => item.locationId));
+      } else {
+        _selectedLocationIds.clear();
+      }
+    });
+
+    _fillEditingValuesIfNeeded();
   }
 
   void _fillEditingValuesIfNeeded() {
     final record = _editingRecord;
 
     if (record == null) {
+      _scheduledWageController.clear();
+      _realWageController.clear();
+      _observationController.clear();
       return;
     }
 
-    _recordDate = record.recordDate;
-    _selectedOperatorId = record.operatorId;
-    _selectedCropId = record.cropId;
-    _selectedTaskId = record.taskId;
-    _selectedLot = record.lot;
-    _selectedNetwork = record.network;
-
-    _selectedLocationIds
-      ..clear()
-      ..addAll(_editingRecordLocations.map((item) => item.locationId));
-
-    _controllers['taskDetail']?.text = record.taskDetail ?? '';
-    _controllers['scheduledWage']?.text =
-        record.scheduledWage?.toString() ?? '';
-    _controllers['realWage']?.text = record.realWage?.toString() ?? '';
-    _controllers['diningRoom']?.text = record.diningRoom ?? '';
-    _controllers['observation']?.text = record.observation ?? '';
-
-    final extraJson = record.extraFieldsJson;
-
-    if (extraJson != null && extraJson.trim().isNotEmpty) {
-      final decoded = jsonDecode(extraJson);
-
-      if (decoded is Map<String, dynamic>) {
-        for (final entry in decoded.entries) {
-          _controllers[entry.key]?.text = entry.value?.toString() ?? '';
-        }
-      }
-    }
+    _scheduledWageController.text = _formatControllerNumber(
+      record.scheduledWage,
+    );
+    _realWageController.text = _formatControllerNumber(record.realWage);
+    _observationController.text = record.observation ?? '';
   }
 
-  Future<void> _loadLocationsForCrop(String cropId) async {
+  Future<void> _loadLocationsForSelectedCrop({
+    bool clearSelection = true,
+  }) async {
+    final cropId = _selectedCropId;
+
+    if (cropId == null) {
+      setState(() {
+        _locationsForCrop = [];
+        if (clearSelection) {
+          _selectedLot = null;
+          _selectedNetwork = null;
+          _selectedLocationIds.clear();
+        }
+      });
+      return;
+    }
+
     setState(() {
       _isLoadingLocations = true;
     });
@@ -267,11 +381,66 @@ class _DynamicRecordFormPageState extends ConsumerState<DynamicRecordFormPage> {
 
       setState(() {
         _locationsForCrop = locations;
+        if (clearSelection) {
+          _selectedLot = null;
+          _selectedNetwork = null;
+          _selectedLocationIds.clear();
+          _selectedDiningRoomId = null;
+          _diningRooms = [];
+        }
       });
     } finally {
       if (mounted) {
         setState(() {
           _isLoadingLocations = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _loadDiningRoomsForCurrentSelection() async {
+    final cropId = _selectedCropId;
+    final lot = _selectedLot;
+    final network = _selectedNetwork;
+
+    if (cropId == null || lot == null || network == null) {
+      setState(() {
+        _diningRooms = [];
+        _selectedDiningRoomId = null;
+      });
+      return;
+    }
+
+    setState(() {
+      _isLoadingDiningRooms = true;
+    });
+
+    try {
+      final repository = ref.read(localRecordRepositoryProvider);
+      final diningRooms = await repository.getDiningRoomsForCropLotNetwork(
+        cropId: cropId,
+        lot: lot,
+        network: network,
+      );
+
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _diningRooms = diningRooms;
+        if (diningRooms.length == 1) {
+          _selectedDiningRoomId = diningRooms.first.id;
+        } else if (!diningRooms.any(
+          (item) => item.id == _selectedDiningRoomId,
+        )) {
+          _selectedDiningRoomId = null;
+        }
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoadingDiningRooms = false;
         });
       }
     }
@@ -296,9 +465,11 @@ class _DynamicRecordFormPageState extends ConsumerState<DynamicRecordFormPage> {
 
   Future<void> _save() async {
     final session = ref.read(sessionProvider);
-    final activeDepartment = session.activeDepartment;
+    final departmentId = session.isAdmin
+        ? _selectedDepartmentId
+        : session.activeDepartment?.id;
 
-    if (activeDepartment == null ||
+    if (departmentId == null ||
         session.userId == null ||
         session.userCode == null) {
       _showMessage('No hay sesión activa válida.');
@@ -306,9 +477,7 @@ class _DynamicRecordFormPageState extends ConsumerState<DynamicRecordFormPage> {
     }
 
     final lockRepository = ref.read(recordLockRepositoryProvider);
-    final latestLockConfig = await lockRepository.getConfig(
-      activeDepartment.id,
-    );
+    final latestLockConfig = await lockRepository.getConfig(departmentId);
 
     final lockMessage = lockRepository.validateCanSave(
       config: latestLockConfig,
@@ -331,26 +500,20 @@ class _DynamicRecordFormPageState extends ConsumerState<DynamicRecordFormPage> {
       return;
     }
 
-    if (_hasCropField) {
-      if (_selectedCropId == null) {
-        _showMessage('Seleccione cultivo.');
-        return;
-      }
+    if (!_isEditing || session.isAdmin) {
+      final validationMessage = _validateProgrammingFields();
 
-      if (_selectedLot == null) {
-        _showMessage('Seleccione lote.');
+      if (validationMessage != null) {
+        _showMessage(validationMessage);
         return;
       }
+    }
 
-      if (_selectedNetwork == null) {
-        _showMessage('Seleccione red.');
-        return;
-      }
-
-      if (_selectedLocationIds.isEmpty) {
-        _showMessage('Seleccione uno o más sectores.');
-        return;
-      }
+    if ((!_isEditing || session.isAdmin) &&
+        _diningRooms.length > 1 &&
+        _selectedDiningRoomId == null) {
+      _showMessage('Seleccione comedor.');
+      return;
     }
 
     setState(() {
@@ -359,63 +522,7 @@ class _DynamicRecordFormPageState extends ConsumerState<DynamicRecordFormPage> {
 
     try {
       final repository = ref.read(localRecordRepositoryProvider);
-
-      final selectedOperator = _findById<FarmOperator>(
-        _operators,
-        _selectedOperatorId,
-        (item) {
-          return item.id;
-        },
-      );
-
-      final selectedCrop = _findById<Crop>(_crops, _selectedCropId, (item) {
-        return item.id;
-      });
-
-      final selectedTask = _findById<FarmTask>(_tasks, _selectedTaskId, (item) {
-        return item.id;
-      });
-
-      final extraFields = <String, dynamic>{};
-
-      for (final field in _fieldConfigs) {
-        if (_isBaseField(field.fieldKey)) {
-          continue;
-        }
-
-        final value = _controllers[field.fieldKey]?.text.trim();
-
-        if (value != null && value.isNotEmpty) {
-          extraFields[field.fieldKey] = field.fieldType == 'number'
-              ? double.tryParse(value.replaceAll(',', '.')) ?? value
-              : value;
-        }
-      }
-
-      final data = RecordFormSaveData(
-        recordDate: _recordDate,
-        weekNumber: _calculateIsoWeekNumber(_recordDate),
-        departmentId: activeDepartment.id,
-        createdByUserId: session.userId!,
-        userCode: session.userCode!,
-        operatorId: _selectedOperatorId,
-        operatorNameSnapshot: selectedOperator?.fullName,
-        cropId: _selectedCropId,
-        cropNameSnapshot: selectedCrop?.name,
-        taskId: _selectedTaskId,
-        taskNameSnapshot: selectedTask?.name,
-        taskDetail: _readText('taskDetail'),
-        lot: _selectedLot,
-        network: _selectedNetwork,
-        scheduledWage: _readDouble('scheduledWage'),
-        realWage: _readDouble('realWage'),
-        ha: _totalHa,
-        ratio: _calculatedRatio,
-        diningRoom: _readText('diningRoom'),
-        observation: _readText('observation'),
-        extraFields: extraFields,
-        selectedLocations: _selectedLocations,
-      );
+      final data = _buildSaveData(session: session, departmentId: departmentId);
 
       if (_isEditing) {
         await repository.updateRecord(
@@ -423,6 +530,7 @@ class _DynamicRecordFormPageState extends ConsumerState<DynamicRecordFormPage> {
           data: data,
           currentUserId: session.userId!,
           isAdmin: session.isAdmin,
+          currentDepartmentId: session.activeDepartment?.id,
         );
       } else {
         await repository.createRecord(data);
@@ -435,12 +543,16 @@ class _DynamicRecordFormPageState extends ConsumerState<DynamicRecordFormPage> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            _isEditing ? 'Registro actualizado.' : 'Registro creado.',
+            _isSupervisorRealWageMode
+                ? 'Jornal real guardado pendiente de sincronización.'
+                : _isEditing
+                ? 'Registro actualizado pendiente de sincronización.'
+                : 'Registro creado pendiente de sincronización.',
           ),
         ),
       );
 
-      context.go('/records');
+      _returnAfterSave(session);
     } catch (error) {
       if (!mounted) {
         return;
@@ -454,6 +566,90 @@ class _DynamicRecordFormPageState extends ConsumerState<DynamicRecordFormPage> {
         });
       }
     }
+  }
+
+  void _returnAfterSave(AppSession session) {
+    if (context.canPop()) {
+      context.pop(true);
+      return;
+    }
+
+    context.go(session.isAdmin ? '/admin/records' : '/home');
+  }
+
+  RecordFormSaveData _buildSaveData({
+    required AppSession session,
+    required String departmentId,
+  }) {
+    final leader = _selectedLeader;
+    final task = _selectedTask;
+    final crop = _selectedCrop;
+    final diningRoom = _selectedDiningRoom;
+
+    return RecordFormSaveData(
+      recordDate: _recordDate,
+      weekNumber: _calculateIsoWeekNumber(_recordDate),
+      departmentId: departmentId,
+      createdByUserId: _editingRecord?.createdByUserId ?? session.userId!,
+      userCode: _editingRecord?.userCode ?? session.userCode!,
+      operatorId: _selectedLeaderOperatorId,
+      operatorNameSnapshot:
+          leader?.fullName ?? _editingRecord?.leaderNameSnapshot,
+      cropId: _selectedCropId,
+      cropNameSnapshot: crop?.name ?? _editingRecord?.cropNameSnapshot,
+      taskId: _selectedTaskId,
+      taskNameSnapshot: task?.name ?? _editingRecord?.taskNameSnapshot,
+      taskDetail: task?.defaultDetail ?? _editingRecord?.taskDetail,
+      lot: _selectedLot,
+      network: _selectedNetwork,
+      scheduledWage: _readDouble(_scheduledWageController),
+      realWage: _readDouble(_realWageController),
+      ha: _totalHa,
+      ratio: _calculatedRatio,
+      diningRoomId: diningRoom?.id,
+      diningRoom: diningRoom?.name ?? _editingRecord?.diningRoom,
+      observation: _readOptionalText(_observationController),
+      extraFields: const {},
+      selectedLocations: _selectedLocations,
+    );
+  }
+
+  String? _validateProgrammingFields() {
+    if (_selectedDepartmentId == null) {
+      return 'Seleccione departamento.';
+    }
+
+    if (_selectedLeaderOperatorId == null) {
+      return 'Seleccione líder.';
+    }
+
+    if (_selectedTaskId == null) {
+      return 'Seleccione labor.';
+    }
+
+    if (_selectedCropId == null) {
+      return 'El departamento o la labor no tiene cultivo asociado.';
+    }
+
+    if (_selectedLot == null) {
+      return 'Seleccione lote.';
+    }
+
+    if (_selectedNetwork == null) {
+      return 'Seleccione red.';
+    }
+
+    if (_selectedLocationIds.isEmpty) {
+      return 'Seleccione uno o más sectores.';
+    }
+
+    final scheduledWage = _readDouble(_scheduledWageController);
+
+    if (scheduledWage == null || scheduledWage <= 0) {
+      return 'Ingrese Jornal programado mayor a 0.';
+    }
+
+    return null;
   }
 
   String? _currentBlockMessage(AppSession session) {
@@ -492,50 +688,48 @@ class _DynamicRecordFormPageState extends ConsumerState<DynamicRecordFormPage> {
     return null;
   }
 
-  String? _readText(String key) {
-    final value = _controllers[key]?.text.trim();
+  String? _readOptionalText(TextEditingController controller) {
+    final value = controller.text.trim();
 
-    if (value == null || value.isEmpty) {
+    if (value.isEmpty) {
       return null;
     }
 
     return value;
   }
 
-  double? _readDouble(String key) {
-    final value = _controllers[key]?.text.trim();
+  double? _readDouble(TextEditingController controller) {
+    final value = controller.text.trim();
 
-    if (value == null || value.isEmpty) {
+    if (value.isEmpty) {
       return null;
     }
 
     return double.tryParse(value.replaceAll(',', '.'));
   }
 
-  bool _isBaseField(String key) {
-    return {
-      'recordDate',
-      'operatorId',
-      'cropId',
-      'taskId',
-      'taskDetail',
-      'scheduledWage',
-      'realWage',
-      'diningRoom',
-      'observation',
-    }.contains(key);
+  bool _isFieldLockedForNormalEditing(String key) {
+    final session = ref.read(sessionProvider);
+
+    if (!_isEditing || session.isAdmin) {
+      return false;
+    }
+
+    return key != 'realWage' && key != 'observation';
   }
 
   @override
   Widget build(BuildContext context) {
     final session = ref.watch(sessionProvider);
-    final activeDepartmentName = session.activeDepartment?.name ?? '-';
     final blockMessage = _currentBlockMessage(session);
     final isBlocked = blockMessage != null;
+    final supervisorRealWageMode = _isEditing && !session.isAdmin;
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(_isEditing ? 'Editar registro' : 'Nuevo registro'),
+        title: Text(
+          _isEditing ? 'Editar registro' : 'Nuevo registro programado',
+        ),
       ),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
@@ -546,50 +740,34 @@ class _DynamicRecordFormPageState extends ConsumerState<DynamicRecordFormPage> {
                 child: Text(_message!),
               ),
             )
-          : _fieldConfigs.isEmpty
-          ? const Center(
-              child: Padding(
-                padding: EdgeInsets.all(24),
-                child: Text(
-                  'No hay configuración de formulario para este departamento.',
-                ),
-              ),
-            )
           : Form(
               key: _formKey,
               child: ListView(
                 padding: const EdgeInsets.all(24),
                 children: [
-                  Card(
-                    child: Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: Text(
-                        'Departamento: $activeDepartmentName\n'
-                        'Semana automática: ${_calculateIsoWeekNumber(_recordDate)}',
-                        style: const TextStyle(fontWeight: FontWeight.bold),
-                      ),
-                    ),
-                  ),
+                  _buildHeaderCard(session),
+                  if (session.isAdmin) ...[
+                    const SizedBox(height: 16),
+                    _buildAdminDepartmentField(),
+                  ],
                   if (isBlocked) ...[
                     const SizedBox(height: 16),
-                    Card(
-                      color: Theme.of(context).colorScheme.errorContainer,
-                      child: Padding(
-                        padding: const EdgeInsets.all(16),
-                        child: Text(
-                          blockMessage,
-                          style: TextStyle(
-                            color: Theme.of(
-                              context,
-                            ).colorScheme.onErrorContainer,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ),
-                    ),
+                    _buildBlockMessageCard(blockMessage),
                   ],
                   const SizedBox(height: 16),
-                  ..._fieldConfigs.map(_buildField),
+                  if (supervisorRealWageMode) ...[
+                    _buildLockedProgrammingSummary(),
+                    _buildRealWageField(),
+                  ] else ...[
+                    _buildDateField(),
+                    _buildLeaderField(),
+                    _buildTaskField(),
+                    _buildLocationSection(),
+                    _buildDiningRoomField(),
+                    _buildScheduledWageField(),
+                    if (_isEditing) _buildRealWageField(),
+                  ],
+                  _buildObservationField(),
                   const SizedBox(height: 24),
                   FilledButton.icon(
                     onPressed: _isSaving || isBlocked ? null : _save,
@@ -601,7 +779,11 @@ class _DynamicRecordFormPageState extends ConsumerState<DynamicRecordFormPage> {
                           )
                         : const Icon(Icons.save),
                     label: Text(
-                      _isEditing ? 'Actualizar registro' : 'Guardar registro',
+                      supervisorRealWageMode
+                          ? 'Guardar jornal real'
+                          : _isEditing
+                          ? 'Actualizar registro'
+                          : 'Guardar programación',
                     ),
                   ),
                   const SizedBox(height: 80),
@@ -611,69 +793,193 @@ class _DynamicRecordFormPageState extends ConsumerState<DynamicRecordFormPage> {
     );
   }
 
-  Widget _buildField(FormFieldConfig field) {
-    switch (field.fieldKey) {
-      case 'recordDate':
-        return _buildDateField(field);
+  Widget _buildHeaderCard(AppSession session) {
+    final departmentName = session.isAdmin
+        ? _selectedDepartment?.name ?? '-'
+        : session.activeDepartment?.name ?? '-';
 
-      case 'operatorId':
-        return _buildOperatorField(field);
-
-      case 'cropId':
-        return Column(
-          children: [_buildCropField(field), _buildLocationSection()],
-        );
-
-      case 'taskId':
-        return _buildTaskField(field);
-
-      case 'scheduledWage':
-      case 'realWage':
-        return _buildTextField(
-          field,
-          keyboardType: const TextInputType.numberWithOptions(decimal: true),
-          inputFormatters: [
-            FilteringTextInputFormatter.allow(RegExp(r'[0-9,.]')),
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              _isEditing
+                  ? 'Edición de registro'
+                  : 'Programación para el día siguiente',
+              style: Theme.of(
+                context,
+              ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 8),
+            Text('Departamento: $departmentName'),
+            Text(
+              'Usuario registrador: ${session.userName ?? '-'} (${session.userCode ?? '-'})',
+            ),
+            Text('Semana automática: ${_calculateIsoWeekNumber(_recordDate)}'),
+            Text('Estado local al guardar: ${SyncStatuses.pending}'),
           ],
-          onChanged: (_) {
-            setState(() {});
-          },
-        );
-
-      case 'observation':
-        return _buildTextField(field, maxLines: 3);
-
-      default:
-        if (field.fieldType == 'number') {
-          return _buildTextField(
-            field,
-            keyboardType: const TextInputType.numberWithOptions(decimal: true),
-            inputFormatters: [
-              FilteringTextInputFormatter.allow(RegExp(r'[0-9,.]')),
-            ],
-            onChanged: (_) {
-              setState(() {});
-            },
-          );
-        }
-
-        if (field.fieldType == 'multiline') {
-          return _buildTextField(field, maxLines: 3);
-        }
-
-        return _buildTextField(field);
-    }
+        ),
+      ),
+    );
   }
 
-  Widget _buildDateField(FormFieldConfig field) {
+  Widget _buildBlockMessageCard(String blockMessage) {
+    return Card(
+      color: Theme.of(context).colorScheme.errorContainer,
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Text(
+          blockMessage,
+          style: TextStyle(
+            color: Theme.of(context).colorScheme.onErrorContainer,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildLockedProgrammingSummary() {
+    final record = _editingRecord;
+    final leaderName =
+        record?.leaderNameSnapshot ??
+        record?.operatorNameSnapshot ??
+        _selectedLeader?.fullName ??
+        '-';
+    final leaderCode =
+        record?.leaderCodeSnapshot ?? _selectedLeader?.code ?? '-';
+    final taskCode = record?.taskCodeSnapshot ?? _selectedTask?.code ?? '-';
+    final taskName = record?.taskNameSnapshot ?? _selectedTask?.name ?? '-';
+    final sectors = _formatRecordSectors(_editingRecordLocations);
+    final lotNetwork = _formatRecordLotNetwork(record, _editingRecordLocations);
+    final diningRoom = record?.diningRoom ?? _selectedDiningRoom?.name ?? '-';
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16),
+      child: Card(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Programación bloqueada',
+                style: Theme.of(
+                  context,
+                ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'Como supervisor solo puede editar Jornal real y Observación.',
+              ),
+              const Divider(height: 24),
+              _ReadOnlySummaryRow(
+                label: 'Fecha',
+                value: record == null ? '-' : _formatDate(record.recordDate),
+              ),
+              _ReadOnlySummaryRow(
+                label: 'Semana',
+                value:
+                    '${record?.weekNumber ?? _calculateIsoWeekNumber(_recordDate)}',
+              ),
+              _ReadOnlySummaryRow(
+                label: 'Departamento',
+                value: _selectedDepartment?.name ?? '-',
+              ),
+              _ReadOnlySummaryRow(
+                label: 'Líder',
+                value: '$leaderName | Código: $leaderCode',
+              ),
+              _ReadOnlySummaryRow(
+                label: 'Labor',
+                value: '$taskCode | $taskName',
+              ),
+              _ReadOnlySummaryRow(label: 'Lote - Red', value: lotNetwork),
+              _ReadOnlySummaryRow(label: 'Sectores', value: sectors),
+              _ReadOnlySummaryRow(
+                label: 'Jornal programado',
+                value: _formatControllerNumber(record?.scheduledWage).isEmpty
+                    ? '-'
+                    : _formatControllerNumber(record?.scheduledWage),
+              ),
+              _ReadOnlySummaryRow(
+                label: 'Ha',
+                value: (record?.ha ?? _totalHa).toStringAsFixed(2),
+              ),
+              _ReadOnlySummaryRow(
+                label: 'Ratio',
+                value: record?.ratio == null
+                    ? '-'
+                    : record!.ratio!.toStringAsFixed(2),
+              ),
+              _ReadOnlySummaryRow(label: 'Comedor', value: diningRoom),
+              _ReadOnlySummaryRow(
+                label: 'Estado sync',
+                value: record?.syncStatus ?? '-',
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAdminDepartmentField() {
+    return DropdownButtonFormField<String>(
+      initialValue: _selectedDepartmentId,
+      decoration: const InputDecoration(
+        labelText: 'Departamento *',
+        prefixIcon: Icon(Icons.account_tree_outlined),
+      ),
+      items: _departments
+          .map(
+            (department) => DropdownMenuItem(
+              value: department.id,
+              child: Text(department.name),
+            ),
+          )
+          .toList(),
+      onChanged: (value) async {
+        if (value == null) {
+          return;
+        }
+
+        setState(() {
+          _selectedDepartmentId = value;
+          _selectedLeaderOperatorId = null;
+          _selectedTaskId = null;
+          _selectedCropId = null;
+          _selectedLot = null;
+          _selectedNetwork = null;
+          _selectedDiningRoomId = null;
+          _selectedLocationIds.clear();
+          _locationsForCrop = [];
+          _diningRooms = [];
+        });
+
+        await _loadDepartmentFormData(departmentId: value);
+      },
+      validator: (value) {
+        if (value == null) {
+          return 'Seleccione departamento.';
+        }
+
+        return null;
+      },
+    );
+  }
+
+  Widget _buildDateField() {
     return Padding(
       padding: const EdgeInsets.only(bottom: 16),
       child: InkWell(
-        onTap: _pickDate,
+        onTap: _isFieldLockedForNormalEditing('recordDate') ? null : _pickDate,
         child: InputDecorator(
-          decoration: InputDecoration(
-            labelText: '${field.label}${field.isRequired ? ' *' : ''}',
-            prefixIcon: const Icon(Icons.calendar_today),
+          decoration: const InputDecoration(
+            labelText: 'Fecha de programación *',
+            prefixIcon: Icon(Icons.calendar_today),
           ),
           child: Text(
             '${_formatDate(_recordDate)} | Semana ${_calculateIsoWeekNumber(_recordDate)}',
@@ -683,74 +989,192 @@ class _DynamicRecordFormPageState extends ConsumerState<DynamicRecordFormPage> {
     );
   }
 
-  Widget _buildOperatorField(FormFieldConfig field) {
+  Widget _buildLeaderField() {
+    final selectedLeader = _selectedLeader;
+    final locked = _isFieldLockedForNormalEditing('operatorId');
+
     return Padding(
       padding: const EdgeInsets.only(bottom: 16),
-      child: DropdownButtonFormField<String>(
-        initialValue: _selectedOperatorId,
-        decoration: InputDecoration(
-          labelText: '${field.label}${field.isRequired ? ' *' : ''}',
-          prefixIcon: const Icon(Icons.person_outline),
-        ),
-        items: _operators
-            .map(
-              (operator) => DropdownMenuItem(
-                value: operator.id,
-                child: Text('${operator.code} - ${operator.fullName}'),
-              ),
-            )
-            .toList(),
-        onChanged: (value) {
-          setState(() {
-            _selectedOperatorId = value;
-          });
-        },
-        validator: (value) {
-          if (field.isRequired && value == null) {
-            return 'Seleccione ${field.label}.';
-          }
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          RawAutocomplete<FarmOperator>(
+            key: ValueKey(
+              'leader_${_selectedDepartmentId}_${selectedLeader?.id ?? 'none'}',
+            ),
+            displayStringForOption: (operator) =>
+                '${operator.fullName} - ${operator.code}',
+            initialValue: TextEditingValue(
+              text: selectedLeader == null
+                  ? ''
+                  : '${selectedLeader.fullName} - ${selectedLeader.code}',
+            ),
+            optionsBuilder: (textEditingValue) {
+              if (locked) {
+                return const Iterable<FarmOperator>.empty();
+              }
 
-          return null;
-        },
+              final query = textEditingValue.text.trim().toLowerCase();
+
+              if (query.isEmpty) {
+                return _leaderOperators.take(20);
+              }
+
+              return _leaderOperators
+                  .where((operator) {
+                    return operator.fullName.toLowerCase().contains(query) ||
+                        operator.code.toLowerCase().contains(query);
+                  })
+                  .take(20);
+            },
+            onSelected: (operator) {
+              setState(() {
+                _selectedLeaderOperatorId = operator.id;
+              });
+            },
+            fieldViewBuilder:
+                (context, controller, focusNode, onFieldSubmitted) {
+                  return TextFormField(
+                    controller: controller,
+                    focusNode: focusNode,
+                    enabled: !locked,
+                    decoration: const InputDecoration(
+                      labelText: 'Líder *',
+                      hintText: 'Buscar por nombre o código',
+                      prefixIcon: Icon(Icons.person_search_outlined),
+                    ),
+                    onChanged: (value) {
+                      final typedValue = value.trim().toLowerCase();
+                      final currentLeader = _selectedLeader;
+                      final currentLabel = currentLeader == null
+                          ? ''
+                          : '${currentLeader.fullName} - ${currentLeader.code}'
+                                .trim()
+                                .toLowerCase();
+
+                      if (typedValue.isEmpty || typedValue != currentLabel) {
+                        setState(() {
+                          _selectedLeaderOperatorId = null;
+                        });
+                      }
+                    },
+                  );
+                },
+            optionsViewBuilder: (context, onSelected, options) {
+              return Align(
+                alignment: Alignment.topLeft,
+                child: Material(
+                  elevation: 4,
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(
+                      maxHeight: 260,
+                      maxWidth: 380,
+                    ),
+                    child: ListView.builder(
+                      padding: EdgeInsets.zero,
+                      itemCount: options.length,
+                      itemBuilder: (context, index) {
+                        final operator = options.elementAt(index);
+
+                        return ListTile(
+                          title: Text(operator.fullName),
+                          subtitle: Text('Código: ${operator.code}'),
+                          onTap: () => onSelected(operator),
+                        );
+                      },
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+          const SizedBox(height: 8),
+          Text(
+            selectedLeader == null
+                ? 'Código líder: -'
+                : 'Código líder: ${selectedLeader.code}',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+          if (_leaderOperators.isEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Text(
+                'No hay personas con cargo líder para este departamento.',
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ),
+            ),
+        ],
       ),
     );
   }
 
-  Widget _buildCropField(FormFieldConfig field) {
+  Widget _buildTaskField() {
+    final selectedTask = _selectedTask;
+    final locked = _isFieldLockedForNormalEditing('taskId');
+
     return Padding(
       padding: const EdgeInsets.only(bottom: 16),
-      child: DropdownButtonFormField<String>(
-        initialValue: _selectedCropId,
-        decoration: InputDecoration(
-          labelText: '${field.label}${field.isRequired ? ' *' : ''}',
-          prefixIcon: const Icon(Icons.grass_outlined),
-        ),
-        items: _crops
-            .map(
-              (crop) =>
-                  DropdownMenuItem(value: crop.id, child: Text(crop.name)),
-            )
-            .toList(),
-        onChanged: (value) async {
-          setState(() {
-            _selectedCropId = value;
-            _selectedLot = null;
-            _selectedNetwork = null;
-            _selectedLocationIds.clear();
-            _locationsForCrop = [];
-          });
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          DropdownButtonFormField<String>(
+            initialValue: _selectedTaskId,
+            decoration: const InputDecoration(
+              labelText: 'Labor *',
+              prefixIcon: Icon(Icons.work_outline),
+            ),
+            items: _tasks
+                .map(
+                  (task) => DropdownMenuItem(
+                    value: task.id,
+                    child: Text('${task.code ?? '-'} | ${task.name}'),
+                  ),
+                )
+                .toList(),
+            onChanged: locked
+                ? null
+                : (value) async {
+                    final task = _findById<FarmTask>(_tasks, value, (item) {
+                      return item.id;
+                    });
 
-          if (value != null) {
-            await _loadLocationsForCrop(value);
-          }
-        },
-        validator: (value) {
-          if (field.isRequired && value == null) {
-            return 'Seleccione ${field.label}.';
-          }
+                    setState(() {
+                      _selectedTaskId = value;
+                      _selectedCropId =
+                          task?.cropId ?? _selectedDepartment?.cropId;
+                      _selectedLot = null;
+                      _selectedNetwork = null;
+                      _selectedDiningRoomId = null;
+                      _selectedLocationIds.clear();
+                      _diningRooms = [];
+                    });
 
-          return null;
-        },
+                    await _loadLocationsForSelectedCrop();
+                  },
+            validator: (value) {
+              if (value == null) {
+                return 'Seleccione labor.';
+              }
+
+              return null;
+            },
+          ),
+          const SizedBox(height: 8),
+          Text(
+            selectedTask == null
+                ? 'Código labor: -'
+                : 'Código labor: ${selectedTask.code ?? '-'}',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+          if (_tasks.isEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Text(
+                'No hay labores activas para este departamento.',
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ),
+            ),
+        ],
       ),
     );
   }
@@ -763,7 +1187,7 @@ class _DynamicRecordFormPageState extends ConsumerState<DynamicRecordFormPage> {
           child: Padding(
             padding: EdgeInsets.all(16),
             child: Text(
-              'Seleccione un cultivo para cargar lotes, redes y sectores.',
+              'Seleccione una labor con configuración completa para cargar lotes, redes y sectores.',
             ),
           ),
         ),
@@ -800,13 +1224,18 @@ class _DynamicRecordFormPageState extends ConsumerState<DynamicRecordFormPage> {
   }
 
   Widget _buildLotField() {
-    final lots = _locationsForCrop.map((item) => item.lot).toSet().toList()
-      ..sort();
+    final lots =
+        _locationsForCrop
+            .map((item) => AgroLocalValueFormatters.compactLot(item.lot))
+            .where((item) => item.isNotEmpty)
+            .toSet()
+            .toList()
+          ..sort(_compareMixedNumbers);
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 16),
       child: DropdownButtonFormField<String>(
-        initialValue: _selectedLot,
+        initialValue: lots.contains(_selectedLot) ? _selectedLot : null,
         decoration: const InputDecoration(
           labelText: 'Lote *',
           prefixIcon: Icon(Icons.map_outlined),
@@ -814,12 +1243,23 @@ class _DynamicRecordFormPageState extends ConsumerState<DynamicRecordFormPage> {
         items: lots
             .map((lot) => DropdownMenuItem(value: lot, child: Text(lot)))
             .toList(),
-        onChanged: (value) {
-          setState(() {
-            _selectedLot = value;
-            _selectedNetwork = null;
-            _selectedLocationIds.clear();
-          });
+        onChanged: _isFieldLockedForNormalEditing('locations')
+            ? null
+            : (value) async {
+                setState(() {
+                  _selectedLot = value;
+                  _selectedNetwork = null;
+                  _selectedDiningRoomId = null;
+                  _selectedLocationIds.clear();
+                  _diningRooms = [];
+                });
+              },
+        validator: (value) {
+          if (value == null) {
+            return 'Seleccione lote.';
+          }
+
+          return null;
         },
       ),
     );
@@ -828,16 +1268,24 @@ class _DynamicRecordFormPageState extends ConsumerState<DynamicRecordFormPage> {
   Widget _buildNetworkField() {
     final networks =
         _locationsForCrop
-            .where((item) => item.lot == _selectedLot)
-            .map((item) => item.network)
+            .where(
+              (item) =>
+                  AgroLocalValueFormatters.compactLot(item.lot) == _selectedLot,
+            )
+            .map(
+              (item) => AgroLocalValueFormatters.compactNetwork(item.network),
+            )
+            .where((item) => item.isNotEmpty)
             .toSet()
             .toList()
-          ..sort();
+          ..sort(_compareMixedNumbers);
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 16),
       child: DropdownButtonFormField<String>(
-        initialValue: _selectedNetwork,
+        initialValue: networks.contains(_selectedNetwork)
+            ? _selectedNetwork
+            : null,
         decoration: const InputDecoration(
           labelText: 'Red *',
           prefixIcon: Icon(Icons.hub_outlined),
@@ -848,14 +1296,25 @@ class _DynamicRecordFormPageState extends ConsumerState<DynamicRecordFormPage> {
                   DropdownMenuItem(value: network, child: Text(network)),
             )
             .toList(),
-        onChanged: _selectedLot == null
+        onChanged:
+            _selectedLot == null || _isFieldLockedForNormalEditing('locations')
             ? null
-            : (value) {
+            : (value) async {
                 setState(() {
                   _selectedNetwork = value;
+                  _selectedDiningRoomId = null;
                   _selectedLocationIds.clear();
                 });
+
+                await _loadDiningRoomsForCurrentSelection();
               },
+        validator: (value) {
+          if (value == null) {
+            return 'Seleccione red.';
+          }
+
+          return null;
+        },
       ),
     );
   }
@@ -865,10 +1324,18 @@ class _DynamicRecordFormPageState extends ConsumerState<DynamicRecordFormPage> {
         _locationsForCrop
             .where(
               (item) =>
-                  item.lot == _selectedLot && item.network == _selectedNetwork,
+                  AgroLocalValueFormatters.compactLot(item.lot) ==
+                      _selectedLot &&
+                  AgroLocalValueFormatters.compactNetwork(item.network) ==
+                      _selectedNetwork,
             )
             .toList()
-          ..sort((a, b) => a.sector.compareTo(b.sector));
+          ..sort(
+            (a, b) => _compareMixedNumbers(
+              AgroLocalValueFormatters.compactSector(a.sector),
+              AgroLocalValueFormatters.compactSector(b.sector),
+            ),
+          );
 
     if (_selectedLot == null || _selectedNetwork == null) {
       return const Padding(
@@ -904,36 +1371,121 @@ class _DynamicRecordFormPageState extends ConsumerState<DynamicRecordFormPage> {
               subtitle: Text('Puede seleccionar uno o varios sectores.'),
             ),
             const Divider(height: 1),
-            ...sectors.map(
-              (location) => CheckboxListTile(
-                value: _selectedLocationIds.contains(location.id),
-                title: Text(location.sector),
-                subtitle: Text(
-                  'Ha: ${location.ha.toStringAsFixed(2)}'
-                  '${location.suggestedDiningRoom == null ? '' : ' | Comedor sugerido: ${location.suggestedDiningRoom}'}',
-                ),
-                onChanged: (checked) {
-                  setState(() {
-                    if (checked == true) {
-                      _selectedLocationIds.add(location.id);
-                    } else {
-                      _selectedLocationIds.remove(location.id);
-                    }
+            ...sectors.map((location) {
+              final sector = AgroLocalValueFormatters.compactSector(
+                location.sector,
+              );
 
-                    _applySuggestedDiningRoomIfEmpty();
-                  });
-                },
-              ),
-            ),
+              return CheckboxListTile(
+                value: _selectedLocationIds.contains(location.id),
+                title: Text(sector),
+                subtitle: Text('Ha sector: ${location.ha.toStringAsFixed(2)}'),
+                onChanged: _isFieldLockedForNormalEditing('locations')
+                    ? null
+                    : (checked) {
+                        setState(() {
+                          if (checked == true) {
+                            _selectedLocationIds.add(location.id);
+                          } else {
+                            _selectedLocationIds.remove(location.id);
+                          }
+                        });
+                      },
+              );
+            }),
           ],
         ),
       ),
     );
   }
 
+  Widget _buildDiningRoomField() {
+    if (_selectedCropId == null ||
+        _selectedLot == null ||
+        _selectedNetwork == null) {
+      return const Padding(
+        padding: EdgeInsets.only(bottom: 16),
+        child: Card(
+          child: Padding(
+            padding: EdgeInsets.all(16),
+            child: Text('Seleccione lote y red para filtrar comedores.'),
+          ),
+        ),
+      );
+    }
+
+    if (_isLoadingDiningRooms) {
+      return const Padding(
+        padding: EdgeInsets.only(bottom: 16),
+        child: Center(child: CircularProgressIndicator()),
+      );
+    }
+
+    if (_diningRooms.isEmpty) {
+      return const Padding(
+        padding: EdgeInsets.only(bottom: 16),
+        child: Card(
+          child: Padding(
+            padding: EdgeInsets.all(16),
+            child: Text(
+              'No hay comedor configurado para este cultivo/lote/red.',
+            ),
+          ),
+        ),
+      );
+    }
+
+    if (_diningRooms.length == 1) {
+      final diningRoom = _diningRooms.first;
+
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 16),
+        child: Card(
+          child: ListTile(
+            leading: const Icon(Icons.restaurant_outlined),
+            title: const Text('Comedor sugerido'),
+            subtitle: Text(diningRoom.name),
+          ),
+        ),
+      );
+    }
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16),
+      child: DropdownButtonFormField<String>(
+        initialValue: _selectedDiningRoomId,
+        decoration: const InputDecoration(
+          labelText: 'Comedor *',
+          prefixIcon: Icon(Icons.restaurant_outlined),
+        ),
+        items: _diningRooms
+            .map(
+              (diningRoom) => DropdownMenuItem(
+                value: diningRoom.id,
+                child: Text(diningRoom.name),
+              ),
+            )
+            .toList(),
+        onChanged: _isFieldLockedForNormalEditing('diningRoom')
+            ? null
+            : (value) {
+                setState(() {
+                  _selectedDiningRoomId = value;
+                });
+              },
+        validator: (value) {
+          if (_diningRooms.length > 1 && value == null) {
+            return 'Seleccione comedor.';
+          }
+
+          return null;
+        },
+      ),
+    );
+  }
+
   Widget _buildHaRatioSummary() {
     final ratio = _calculatedRatio;
-    final suggestedDiningRoom = _suggestedDiningRoom;
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 16),
@@ -950,14 +1502,8 @@ class _DynamicRecordFormPageState extends ConsumerState<DynamicRecordFormPage> {
               const SizedBox(height: 8),
               Text(
                 ratio == null
-                    ? 'Ratio: ingrese Jornal real y seleccione sectores.'
+                    ? 'Ratio: ingrese Jornal programado y seleccione sectores.'
                     : 'Ratio: ${ratio.toStringAsFixed(2)}',
-              ),
-              const SizedBox(height: 8),
-              Text(
-                suggestedDiningRoom == null
-                    ? 'Comedor sugerido: -'
-                    : 'Comedor sugerido: $suggestedDiningRoom',
               ),
             ],
           ),
@@ -966,92 +1512,148 @@ class _DynamicRecordFormPageState extends ConsumerState<DynamicRecordFormPage> {
     );
   }
 
-  void _applySuggestedDiningRoomIfEmpty() {
-    final suggestion = _suggestedDiningRoom;
-    final controller = _controllers['diningRoom'];
-
-    if (suggestion == null || controller == null) {
-      return;
-    }
-
-    if (controller.text.trim().isEmpty) {
-      controller.text = suggestion;
-    }
-  }
-
-  Widget _buildTaskField(FormFieldConfig field) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 16),
-      child: DropdownButtonFormField<String>(
-        initialValue: _selectedTaskId,
-        decoration: InputDecoration(
-          labelText: '${field.label}${field.isRequired ? ' *' : ''}',
-          prefixIcon: const Icon(Icons.work_outline),
-        ),
-        items: _tasks
-            .map(
-              (task) =>
-                  DropdownMenuItem(value: task.id, child: Text(task.name)),
-            )
-            .toList(),
-        onChanged: (value) {
-          setState(() {
-            _selectedTaskId = value;
-
-            final selectedTask = _findById<FarmTask>(
-              _tasks,
-              value,
-              (item) => item.id,
-            );
-            final detail = selectedTask?.defaultDetail;
-
-            if (detail != null && detail.isNotEmpty) {
-              _controllers['taskDetail']?.text = detail;
-            }
-          });
-        },
-        validator: (value) {
-          if (field.isRequired && value == null) {
-            return 'Seleccione ${field.label}.';
-          }
-
-          return null;
-        },
-      ),
-    );
-  }
-
-  Widget _buildTextField(
-    FormFieldConfig field, {
-    TextInputType? keyboardType,
-    List<TextInputFormatter>? inputFormatters,
-    int maxLines = 1,
-    ValueChanged<String>? onChanged,
-  }) {
-    final controller = _controllers[field.fieldKey] ?? TextEditingController();
-
-    _controllers[field.fieldKey] = controller;
-
+  Widget _buildScheduledWageField() {
     return Padding(
       padding: const EdgeInsets.only(bottom: 16),
       child: TextFormField(
-        controller: controller,
-        keyboardType: keyboardType,
-        inputFormatters: inputFormatters,
-        maxLines: maxLines,
-        onChanged: onChanged,
-        decoration: InputDecoration(
-          labelText: '${field.label}${field.isRequired ? ' *' : ''}',
+        controller: _scheduledWageController,
+        enabled: !_isFieldLockedForNormalEditing('scheduledWage'),
+        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+        inputFormatters: [
+          FilteringTextInputFormatter.allow(RegExp(r'[0-9,.]')),
+        ],
+        decoration: const InputDecoration(
+          labelText: 'Jornal programado *',
+          prefixIcon: Icon(Icons.groups_outlined),
         ),
+        onChanged: (_) {
+          setState(() {});
+        },
         validator: (value) {
-          if (field.isRequired && (value == null || value.trim().isEmpty)) {
-            return 'Ingrese ${field.label}.';
+          if (_isEditing && !ref.read(sessionProvider).isAdmin) {
+            return null;
+          }
+
+          final number = double.tryParse((value ?? '').replaceAll(',', '.'));
+
+          if (number == null || number <= 0) {
+            return 'Ingrese Jornal programado mayor a 0.';
           }
 
           return null;
         },
       ),
     );
+  }
+
+  Widget _buildRealWageField() {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16),
+      child: TextFormField(
+        controller: _realWageController,
+        enabled: !_isFieldLockedForNormalEditing('realWage'),
+        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+        inputFormatters: [
+          FilteringTextInputFormatter.allow(RegExp(r'[0-9,.]')),
+        ],
+        decoration: const InputDecoration(
+          labelText: 'Jornal real',
+          prefixIcon: Icon(Icons.fact_check_outlined),
+        ),
+        validator: (value) {
+          final cleanValue = (value ?? '').trim();
+
+          if (cleanValue.isEmpty) {
+            return null;
+          }
+
+          final number = double.tryParse(cleanValue.replaceAll(',', '.'));
+
+          if (number == null || number < 0) {
+            return 'Ingrese Jornal real válido.';
+          }
+
+          return null;
+        },
+      ),
+    );
+  }
+
+  Widget _buildObservationField() {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16),
+      child: TextFormField(
+        controller: _observationController,
+        enabled: !_isFieldLockedForNormalEditing('observation'),
+        maxLines: 3,
+        decoration: const InputDecoration(
+          labelText: 'Observación',
+          prefixIcon: Icon(Icons.notes_outlined),
+        ),
+      ),
+    );
+  }
+
+  String _formatRecordLotNetwork(
+    FarmRecord? record,
+    List<FarmRecordLocation> locations,
+  ) {
+    if (locations.isNotEmpty) {
+      final values =
+          locations
+              .map(
+                (location) => _formatLotNetwork(
+                  location.lotSnapshot,
+                  location.networkSnapshot,
+                ),
+              )
+              .toSet()
+              .toList()
+            ..sort(_compareMixedNumbers);
+
+      return values.join(', ');
+    }
+
+    return _formatLotNetwork(record?.lot, record?.network);
+  }
+
+  String _formatLotNetwork(String? lot, String? network) {
+    final cleanLot = AgroLocalValueFormatters.compactLot(lot);
+    final cleanNetwork = AgroLocalValueFormatters.compactNetwork(network);
+
+    if (cleanLot.isEmpty) {
+      return '-';
+    }
+
+    if (cleanNetwork.isEmpty) {
+      return cleanLot;
+    }
+
+    return '${cleanLot}_R$cleanNetwork';
+  }
+
+  String _formatRecordSectors(List<FarmRecordLocation> locations) {
+    if (locations.isEmpty) {
+      return '-';
+    }
+
+    final sectors =
+        locations
+            .map(
+              (location) => AgroLocalValueFormatters.compactSector(
+                location.sectorSnapshot,
+              ),
+            )
+            .where((sector) => sector.isNotEmpty)
+            .toSet()
+            .toList()
+          ..sort(_compareMixedNumbers);
+
+    if (sectors.isEmpty) {
+      return '-';
+    }
+
+    return sectors.join(', ');
   }
 
   String _formatDate(DateTime date) {
@@ -1060,6 +1662,18 @@ class _DynamicRecordFormPageState extends ConsumerState<DynamicRecordFormPage> {
     final year = date.year.toString();
 
     return '$day/$month/$year';
+  }
+
+  String _formatControllerNumber(double? value) {
+    if (value == null) {
+      return '';
+    }
+
+    if (value % 1 == 0) {
+      return value.toStringAsFixed(0);
+    }
+
+    return value.toString();
   }
 
   int _calculateIsoWeekNumber(DateTime date) {
@@ -1074,5 +1688,43 @@ class _DynamicRecordFormPageState extends ConsumerState<DynamicRecordFormPage> {
     );
 
     return 1 + thursday.difference(firstThursday).inDays ~/ 7;
+  }
+
+  int _compareMixedNumbers(String first, String second) {
+    final firstNumber = int.tryParse(first.trim());
+    final secondNumber = int.tryParse(second.trim());
+
+    if (firstNumber != null && secondNumber != null) {
+      return firstNumber.compareTo(secondNumber);
+    }
+
+    return first.compareTo(second);
+  }
+}
+
+class _ReadOnlySummaryRow extends StatelessWidget {
+  const _ReadOnlySummaryRow({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 150,
+            child: Text(
+              label,
+              style: const TextStyle(fontWeight: FontWeight.w600),
+            ),
+          ),
+          Expanded(child: Text(value)),
+        ],
+      ),
+    );
   }
 }

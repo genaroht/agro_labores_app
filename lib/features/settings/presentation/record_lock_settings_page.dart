@@ -22,6 +22,7 @@ class _RecordLockSettingsPageState
   bool _globalLockEnabled = false;
   bool _allowAdminOverride = true;
   TimeOfDay? _cutoffTime;
+  String? _selectedDepartmentId;
 
   RecordLockConfig? _loadedConfig;
 
@@ -39,19 +40,20 @@ class _RecordLockSettingsPageState
 
   Future<void> _loadConfig() async {
     final session = ref.read(sessionProvider);
-    final activeDepartment = session.activeDepartment;
+    final selectedDepartment = _selectedDepartmentFor(session);
 
-    if (activeDepartment == null) {
+    if (selectedDepartment == null) {
       return;
     }
 
     setState(() {
       _isLoading = true;
+      _selectedDepartmentId = selectedDepartment.id;
     });
 
     try {
       final repository = ref.read(recordLockRepositoryProvider);
-      final config = await repository.getConfig(activeDepartment.id);
+      final config = await repository.getConfig(selectedDepartment.id);
 
       if (!mounted) {
         return;
@@ -73,6 +75,26 @@ class _RecordLockSettingsPageState
     }
   }
 
+  SessionDepartment? _selectedDepartmentFor(AppSession session) {
+    if (_selectedDepartmentId != null) {
+      for (final department in session.assignedDepartments) {
+        if (department.id == _selectedDepartmentId) {
+          return department;
+        }
+      }
+    }
+
+    if (session.activeDepartment != null) {
+      return session.activeDepartment;
+    }
+
+    if (session.assignedDepartments.isNotEmpty) {
+      return session.assignedDepartments.first;
+    }
+
+    return null;
+  }
+
   Future<void> _pickCutoffTime() async {
     final selected = await showTimePicker(
       context: context,
@@ -90,15 +112,15 @@ class _RecordLockSettingsPageState
 
   Future<void> _saveConfig() async {
     final session = ref.read(sessionProvider);
-    final activeDepartment = session.activeDepartment;
+    final selectedDepartment = _selectedDepartmentFor(session);
 
     if (!session.isAdmin) {
       _showMessage('Solo el administrador puede modificar esta configuración.');
       return;
     }
 
-    if (activeDepartment == null) {
-      _showMessage('No hay departamento activo.');
+    if (selectedDepartment == null) {
+      _showMessage('No hay departamento seleccionado.');
       return;
     }
 
@@ -110,7 +132,7 @@ class _RecordLockSettingsPageState
       final repository = ref.read(recordLockRepositoryProvider);
 
       final config = RecordLockConfig(
-        departmentId: activeDepartment.id,
+        departmentId: selectedDepartment.id,
         globalLockEnabled: _globalLockEnabled,
         cutoffTime: _cutoffTime == null ? null : _formatTimeValue(_cutoffTime!),
         allowAdminOverride: _allowAdminOverride,
@@ -205,7 +227,7 @@ class _RecordLockSettingsPageState
   @override
   Widget build(BuildContext context) {
     final session = ref.watch(sessionProvider);
-    final activeDepartment = session.activeDepartment;
+    final selectedDepartment = _selectedDepartmentFor(session);
 
     if (!session.isAdmin) {
       return Scaffold(
@@ -222,13 +244,13 @@ class _RecordLockSettingsPageState
       );
     }
 
-    if (activeDepartment == null) {
+    if (selectedDepartment == null) {
       return Scaffold(
         appBar: AppBar(title: const Text('Bloqueo de registros')),
         body: const Center(
           child: Padding(
             padding: EdgeInsets.all(24),
-            child: Text('No hay departamento activo.'),
+            child: Text('No hay departamento seleccionado.'),
           ),
         ),
       );
@@ -244,13 +266,43 @@ class _RecordLockSettingsPageState
                 Card(
                   child: Padding(
                     padding: const EdgeInsets.all(16),
-                    child: Text(
-                      'Departamento: ${activeDepartment.name}',
-                      style: const TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
+                    child: session.assignedDepartments.length <= 1
+                        ? Text(
+                            'Departamento: ${selectedDepartment.name}',
+                            style: const TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          )
+                        : DropdownButtonFormField<String>(
+                            initialValue: selectedDepartment.id,
+                            decoration: const InputDecoration(
+                              labelText: 'Departamento a bloquear',
+                              helperText:
+                                  'El administrador tiene acceso a todos los departamentos activos.',
+                            ),
+                            items: session.assignedDepartments
+                                .map(
+                                  (department) => DropdownMenuItem(
+                                    value: department.id,
+                                    child: Text(department.name),
+                                  ),
+                                )
+                                .toList(),
+                            onChanged: _isLoading
+                                ? null
+                                : (value) async {
+                                    if (value == null) {
+                                      return;
+                                    }
+
+                                    setState(() {
+                                      _selectedDepartmentId = value;
+                                    });
+
+                                    await _loadConfig();
+                                  },
+                          ),
                   ),
                 ),
                 const SizedBox(height: 16),

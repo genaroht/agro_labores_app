@@ -1,6 +1,6 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <application
-        android:label="agro_labores_app"
+        android:label="Agro Labores"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity

@@ -3,6 +3,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../shared/providers/session_provider.dart';
+import '../../../shared/widgets/action_card.dart';
+import '../../../shared/widgets/metric_card.dart';
+import '../../../shared/widgets/responsive_page.dart';
 
 class HomePage extends ConsumerWidget {
   const HomePage({super.key});
@@ -10,18 +13,23 @@ class HomePage extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final session = ref.watch(sessionProvider);
+    final canChangeDepartment =
+        !session.isAdmin && session.assignedDepartments.length > 1;
 
     return Scaffold(
       appBar: AppBar(
         title: const Text('Inicio'),
         actions: [
-          IconButton(
-            tooltip: 'Cambiar departamento',
-            onPressed: () async {
-              await ref.read(sessionProvider.notifier).clearActiveDepartment();
-            },
-            icon: const Icon(Icons.swap_horiz),
-          ),
+          if (canChangeDepartment)
+            IconButton(
+              tooltip: 'Cambiar departamento',
+              onPressed: () async {
+                await ref
+                    .read(sessionProvider.notifier)
+                    .clearActiveDepartment();
+              },
+              icon: const Icon(Icons.swap_horiz),
+            ),
           IconButton(
             tooltip: 'Cerrar sesión',
             onPressed: () async {
@@ -31,141 +39,85 @@ class HomePage extends ConsumerWidget {
           ),
         ],
       ),
-      body: ListView(
-        padding: const EdgeInsets.all(24),
+      body: ResponsivePage(
         children: [
-          Card(
-            elevation: 2,
-            child: Padding(
-              padding: const EdgeInsets.all(20),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'Sesión activa',
-                    style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
-                  ),
-                  const SizedBox(height: 16),
-                  _InfoRow(label: 'Usuario', value: session.userName ?? '-'),
-                  _InfoRow(label: 'Código', value: session.userCode ?? '-'),
-                  _InfoRow(label: 'Rol', value: session.roleName ?? '-'),
-                  _InfoRow(
-                    label: 'Es admin',
-                    value: session.isAdmin ? 'Sí' : 'No',
-                  ),
-                  _InfoRow(
-                    label: 'Departamento activo',
-                    value: session.activeDepartment?.name ?? '-',
-                  ),
-                ],
-              ),
-            ),
+          PageHeader(
+            icon: Icons.eco_outlined,
+            title: 'Hola, ${session.userName ?? 'usuario'}',
+            subtitle: session.isAdmin
+                ? 'Acceso administrativo a todos los departamentos.'
+                : 'Departamento activo: ${session.activeDepartment?.name ?? '-'}',
           ),
           const SizedBox(height: 24),
-          Card(
-            elevation: 2,
-            child: Column(
-              children: [
-                if (session.isAdmin) ...[
-                  ListTile(
-                    leading: const Icon(Icons.admin_panel_settings_outlined),
-                    title: const Text('Panel Admin'),
-                    subtitle: const Text(
-                      'Usuarios, catálogos, ubicaciones, bloqueos y registros',
-                    ),
-                    trailing: const Icon(Icons.chevron_right),
-                    onTap: () {
-                      context.push('/admin');
-                    },
-                  ),
-                  const Divider(height: 1),
-                ],
-                ListTile(
-                  leading: const Icon(Icons.edit_note),
-                  title: const Text('Nuevo registro'),
-                  subtitle: const Text('Formulario dinámico por departamento'),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: () {
-                    context.push('/records/new');
-                  },
+          ResponsiveSection(
+            maxColumns: 3,
+            children: [
+              MetricCard(
+                icon: Icons.badge_outlined,
+                label: 'Código',
+                value: session.userCode ?? '-',
+              ),
+              MetricCard(
+                icon: Icons.work_outline,
+                label: 'Cargo',
+                value: session.roleName ?? '-',
+              ),
+              MetricCard(
+                icon: Icons.account_tree_outlined,
+                label: 'Acceso',
+                value: session.isAdmin ? 'Administrador' : 'Supervisor',
+                emphasize: session.isAdmin,
+              ),
+            ],
+          ),
+          const SizedBox(height: 24),
+          PageHeader(
+            title: 'Acciones principales',
+            subtitle: session.isAdmin
+                ? 'Entra al panel para administrar catálogos, reportes, captura y bloqueos.'
+                : 'Atajos para registrar, revisar captura, mantener personas y sincronizar.',
+          ),
+          const SizedBox(height: 16),
+          ResponsiveSection(
+            minItemWidth: 320,
+            children: [
+              if (session.isAdmin) ...[
+                AppActionCard(
+                  icon: Icons.admin_panel_settings_outlined,
+                  title: 'Panel Admin',
+                  subtitle:
+                      'Usuarios, catálogos, captura, reportes y bloqueo de registros',
+                  onTap: () => context.push('/admin'),
                 ),
-                const Divider(height: 1),
-                ListTile(
-                  leading: const Icon(Icons.list_alt),
-                  title: const Text('Mis registros'),
-                  subtitle: Text(
-                    session.isAdmin
-                        ? 'Ver y administrar registros del departamento'
-                        : 'Ver y editar mis registros',
-                  ),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: () {
-                    context.push('/records');
-                  },
+              ] else ...[
+                AppActionCard(
+                  icon: Icons.edit_note,
+                  title: 'Nuevo registro',
+                  subtitle: 'Registrar programación del departamento activo',
+                  onTap: () => context.push('/records/new'),
                 ),
-                if (session.isAdmin) ...[
-                  const Divider(height: 1),
-                  ListTile(
-                    leading: const Icon(Icons.lock_clock),
-                    title: const Text('Bloqueo de registros'),
-                    subtitle: const Text(
-                      'Configurar bloqueo global y horario límite',
-                    ),
-                    trailing: const Icon(Icons.chevron_right),
-                    onTap: () {
-                      context.push('/settings/record-lock');
-                    },
-                  ),
-                ],
-                const Divider(height: 1),
-                ListTile(
-                  leading: const Icon(Icons.sync),
-                  title: const Text('Sincronización'),
-                  subtitle: const Text('Subir pendientes y descargar cambios'),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: () {
-                    context.push('/sync');
-                  },
+                AppActionCard(
+                  icon: Icons.table_chart_outlined,
+                  title: 'Mis registros',
+                  subtitle:
+                      'Vista captura para revisar y completar jornales reales',
+                  onTap: () => context.push('/records'),
                 ),
-                const Divider(height: 1),
-                ListTile(
-                  leading: const Icon(Icons.storage),
-                  title: const Text('Probar base local'),
-                  subtitle: const Text('Insertar y consultar datos offline'),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: () {
-                    context.push('/debug/database');
-                  },
+                AppActionCard(
+                  icon: Icons.badge_outlined,
+                  title: 'Panel Supervisor',
+                  subtitle: 'Personas y catálogos operativos',
+                  onTap: () => context.push('/supervisor'),
                 ),
               ],
-            ),
+              AppActionCard(
+                icon: Icons.sync,
+                title: 'Sincronización',
+                subtitle: 'Subir pendientes y descargar cambios',
+                onTap: () => context.push('/sync'),
+              ),
+            ],
           ),
-        ],
-      ),
-    );
-  }
-}
-
-class _InfoRow extends StatelessWidget {
-  const _InfoRow({required this.label, required this.value});
-
-  final String label;
-  final String value;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Row(
-        children: [
-          SizedBox(
-            width: 170,
-            child: Text(
-              label,
-              style: const TextStyle(fontWeight: FontWeight.w600),
-            ),
-          ),
-          Expanded(child: Text(value)),
         ],
       ),
     );

@@ -11,6 +11,48 @@ class SyncStatuses {
   static const error = 'error';
 }
 
+/// Helpers for legacy agricultural labels stored before normalization.
+///
+/// Examples:
+/// - "Lote 1" -> "1"
+/// - "Red 2" -> "2"
+/// - "R2" -> "2"
+/// - "Sector 15" -> "15"
+class AgroLocalValueFormatters {
+  const AgroLocalValueFormatters._();
+
+  static String compactAgronomicNumber(String? value) {
+    final raw = value?.trim() ?? '';
+
+    if (raw.isEmpty) {
+      return '';
+    }
+
+    final normalized = raw
+        .replaceAll(
+          RegExp(r'^(lote|lot|red|sector)\s+', caseSensitive: false),
+          '',
+        )
+        .replaceAll(RegExp(r'^r\s*', caseSensitive: false), '')
+        .trim();
+
+    final numericMatch = RegExp(r'\d+(?:[\.,]\d+)?').firstMatch(normalized);
+
+    if (numericMatch != null &&
+        normalized.replaceAll(RegExp(r'[\d\.,]'), '').trim().isEmpty) {
+      return numericMatch.group(0)!.replaceAll(',', '.');
+    }
+
+    return normalized;
+  }
+
+  static String compactLot(String? value) => compactAgronomicNumber(value);
+
+  static String compactNetwork(String? value) => compactAgronomicNumber(value);
+
+  static String compactSector(String? value) => compactAgronomicNumber(value);
+}
+
 @DataClassName('LocalRole')
 class Roles extends Table {
   @override
@@ -39,10 +81,11 @@ class Users extends Table {
 
   TextColumn get id => text()();
   TextColumn get serverId => text().nullable()();
-  TextColumn get code => text().unique()();
+  TextColumn get code => text().withLength(min: 6, max: 6).unique()();
   TextColumn get fullName => text()();
-  TextColumn get passwordPin => text()();
+  TextColumn get passwordPin => text().withLength(min: 6, max: 6)();
   TextColumn get roleId => text().references(Roles, #id)();
+  TextColumn get operatorId => text().nullable().references(Operators, #id)();
   BoolColumn get isActive => boolean().withDefault(const Constant(true))();
 
   DateTimeColumn get createdAt =>
@@ -65,6 +108,7 @@ class Departments extends Table {
   TextColumn get id => text()();
   TextColumn get serverId => text().nullable()();
   TextColumn get name => text()();
+  TextColumn get cropId => text().nullable().references(Crops, #id)();
   BoolColumn get isActive => boolean().withDefault(const Constant(true))();
 
   DateTimeColumn get createdAt =>
@@ -100,6 +144,30 @@ class UserDepartments extends Table {
   Set<Column> get primaryKey => {id};
 }
 
+@DataClassName('OperatorPosition')
+class Positions extends Table {
+  @override
+  String get tableName => 'positions';
+
+  TextColumn get id => text()();
+  TextColumn get serverId => text().nullable()();
+  TextColumn get name => text().unique()();
+  BoolColumn get canBeLeader => boolean().withDefault(const Constant(false))();
+  BoolColumn get canLogin => boolean().withDefault(const Constant(false))();
+  BoolColumn get isActive => boolean().withDefault(const Constant(true))();
+
+  DateTimeColumn get createdAt =>
+      dateTime().clientDefault(() => DateTime.now())();
+  DateTimeColumn get updatedAt =>
+      dateTime().clientDefault(() => DateTime.now())();
+  DateTimeColumn get deletedAt => dateTime().nullable()();
+  TextColumn get syncStatus =>
+      text().withDefault(const Constant(SyncStatuses.synced))();
+
+  @override
+  Set<Column> get primaryKey => {id};
+}
+
 @DataClassName('FarmOperator')
 class Operators extends Table {
   @override
@@ -107,10 +175,11 @@ class Operators extends Table {
 
   TextColumn get id => text()();
   TextColumn get serverId => text().nullable()();
-  TextColumn get code => text()();
+  TextColumn get code => text().withLength(min: 6, max: 6).unique()();
   TextColumn get fullName => text()();
   TextColumn get departmentId =>
       text().nullable().references(Departments, #id)();
+  TextColumn get positionId => text().nullable().references(Positions, #id)();
   BoolColumn get isActive => boolean().withDefault(const Constant(true))();
 
   DateTimeColumn get createdAt =>
@@ -156,6 +225,8 @@ class Tasks extends Table {
   TextColumn get serverId => text().nullable()();
   TextColumn get departmentId =>
       text().nullable().references(Departments, #id)();
+  TextColumn get cropId => text().nullable().references(Crops, #id)();
+  TextColumn get code => text().nullable()();
   TextColumn get name => text()();
   TextColumn get defaultDetail => text().nullable()();
   BoolColumn get isActive => boolean().withDefault(const Constant(true))();
@@ -199,6 +270,31 @@ class Locations extends Table {
   Set<Column> get primaryKey => {id};
 }
 
+@DataClassName('DiningRoom')
+class DiningRooms extends Table {
+  @override
+  String get tableName => 'dining_rooms';
+
+  TextColumn get id => text()();
+  TextColumn get serverId => text().nullable()();
+  TextColumn get cropId => text().references(Crops, #id)();
+  TextColumn get name => text()();
+  TextColumn get lot => text().nullable()();
+  TextColumn get network => text().nullable()();
+  BoolColumn get isActive => boolean().withDefault(const Constant(true))();
+
+  DateTimeColumn get createdAt =>
+      dateTime().clientDefault(() => DateTime.now())();
+  DateTimeColumn get updatedAt =>
+      dateTime().clientDefault(() => DateTime.now())();
+  DateTimeColumn get deletedAt => dateTime().nullable()();
+  TextColumn get syncStatus =>
+      text().withDefault(const Constant(SyncStatuses.synced))();
+
+  @override
+  Set<Column> get primaryKey => {id};
+}
+
 @DataClassName('FarmRecord')
 class Records extends Table {
   @override
@@ -214,13 +310,23 @@ class Records extends Table {
   TextColumn get createdByUserId => text().references(Users, #id)();
   TextColumn get userCode => text()();
 
+  @ReferenceName('programmedOperatorRecords')
   TextColumn get operatorId => text().nullable().references(Operators, #id)();
   TextColumn get operatorNameSnapshot => text().nullable()();
+
+  // Explicit leader fields. The legacy operatorId/operatorNameSnapshot are
+  // kept for backward compatibility with the current UI and old records.
+  @ReferenceName('leaderRecords')
+  TextColumn get leaderOperatorId =>
+      text().nullable().references(Operators, #id)();
+  TextColumn get leaderCodeSnapshot => text().nullable()();
+  TextColumn get leaderNameSnapshot => text().nullable()();
 
   TextColumn get cropId => text().nullable().references(Crops, #id)();
   TextColumn get cropNameSnapshot => text().nullable()();
 
   TextColumn get taskId => text().nullable().references(Tasks, #id)();
+  TextColumn get taskCodeSnapshot => text().nullable()();
   TextColumn get taskNameSnapshot => text().nullable()();
   TextColumn get taskDetail => text().nullable()();
 
@@ -232,6 +338,8 @@ class Records extends Table {
   RealColumn get ha => real().withDefault(const Constant(0))();
   RealColumn get ratio => real().nullable()();
 
+  TextColumn get diningRoomId =>
+      text().nullable().references(DiningRooms, #id)();
   TextColumn get diningRoom => text().nullable()();
   TextColumn get observation => text().nullable()();
 
@@ -363,13 +471,15 @@ class SyncQueueItems extends Table {
 @DriftDatabase(
   tables: [
     Roles,
-    Users,
-    Departments,
-    UserDepartments,
-    Operators,
     Crops,
+    Positions,
+    Departments,
+    Operators,
+    Users,
+    UserDepartments,
     Tasks,
     Locations,
+    DiningRooms,
     Records,
     RecordLocations,
     FormFieldConfigs,
@@ -381,7 +491,136 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase([QueryExecutor? executor]) : super(executor ?? _openConnection());
 
   @override
-  int get schemaVersion => 1;
+  int get schemaVersion => 2;
+
+  @override
+  MigrationStrategy get migration => MigrationStrategy(
+    onCreate: (m) async {
+      await m.createAll();
+      await _ensureCoreCatalogData();
+    },
+    onUpgrade: (m, from, to) async {
+      if (from < 2) {
+        await _upgradeFrom1To2(m);
+      }
+    },
+    beforeOpen: (details) async {
+      await customStatement('PRAGMA foreign_keys = ON');
+      await customStatement('PRAGMA busy_timeout = 5000');
+      await customStatement('PRAGMA journal_mode = WAL');
+      await _ensurePerformanceIndexes();
+      await _ensureCoreCatalogData();
+    },
+  );
+
+  Future<void> _upgradeFrom1To2(Migrator m) async {
+    await m.createTable(positions);
+    await m.createTable(diningRooms);
+    await _ensureDefaultPositions();
+
+    await m.addColumn(users, users.operatorId);
+    await m.addColumn(departments, departments.cropId);
+    await m.addColumn(operators, operators.positionId);
+    await m.addColumn(tasks, tasks.cropId);
+    await m.addColumn(tasks, tasks.code);
+    await m.addColumn(records, records.leaderOperatorId);
+    await m.addColumn(records, records.leaderCodeSnapshot);
+    await m.addColumn(records, records.leaderNameSnapshot);
+    await m.addColumn(records, records.taskCodeSnapshot);
+    await m.addColumn(records, records.diningRoomId);
+
+    await customStatement('''
+      UPDATE departments
+      SET crop_id = 'crop_arandano'
+      WHERE crop_id IS NULL
+        AND EXISTS (SELECT 1 FROM crops WHERE id = 'crop_arandano')
+        AND (name LIKE '%Arándano%' OR name LIKE '%Arandano%')
+    ''');
+
+    await customStatement('''
+      UPDATE departments
+      SET crop_id = 'crop_palto'
+      WHERE crop_id IS NULL
+        AND EXISTS (SELECT 1 FROM crops WHERE id = 'crop_palto')
+        AND name LIKE '%Palto%'
+    ''');
+
+    await customStatement('''
+      UPDATE tasks
+      SET crop_id = (
+        SELECT crop_id
+        FROM departments
+        WHERE departments.id = tasks.department_id
+      )
+      WHERE crop_id IS NULL
+        AND department_id IS NOT NULL
+        AND EXISTS (
+          SELECT 1
+          FROM departments
+          WHERE departments.id = tasks.department_id
+            AND departments.crop_id IS NOT NULL
+        )
+    ''');
+
+    await customStatement('''
+      UPDATE records
+      SET leader_operator_id = operator_id,
+          leader_name_snapshot = operator_name_snapshot
+      WHERE leader_operator_id IS NULL
+        AND operator_id IS NOT NULL
+    ''');
+
+    await customStatement('''
+      UPDATE records
+      SET leader_code_snapshot = (
+        SELECT code
+        FROM operators
+        WHERE operators.id = records.operator_id
+      )
+      WHERE leader_code_snapshot IS NULL
+        AND operator_id IS NOT NULL
+        AND EXISTS (
+          SELECT 1
+          FROM operators
+          WHERE operators.id = records.operator_id
+        )
+    ''');
+
+    await customStatement('''
+      UPDATE records
+      SET task_code_snapshot = (
+        SELECT code
+        FROM tasks
+        WHERE tasks.id = records.task_id
+      )
+      WHERE task_code_snapshot IS NULL
+        AND task_id IS NOT NULL
+        AND EXISTS (
+          SELECT 1
+          FROM tasks
+          WHERE tasks.id = records.task_id
+            AND tasks.code IS NOT NULL
+        )
+    ''');
+
+    await customStatement('''
+      UPDATE operators
+      SET position_id = 'position_lider'
+      WHERE position_id IS NULL
+        AND EXISTS (
+          SELECT 1
+          FROM records
+          WHERE records.operator_id = operators.id
+             OR records.leader_operator_id = operators.id
+        )
+    ''');
+
+    await customStatement('''
+      UPDATE operators
+      SET position_id = 'position_operario'
+      WHERE position_id IS NULL
+    ''');
+  }
 
   static QueryExecutor _openConnection() {
     return driftDatabase(
@@ -392,131 +631,121 @@ class AppDatabase extends _$AppDatabase {
     );
   }
 
-  Future<void> seedDemoData() async {
+  Future<void> _ensurePerformanceIndexes() async {
+    // Índices creados fuera del schema generado para no exigir regenerar Drift.
+    // Mejoran login, filtros por departamento/fecha y cola offline-first.
+    await customStatement(
+      'CREATE INDEX IF NOT EXISTS idx_users_code_active ON users(code, is_active, deleted_at)',
+    );
+    await customStatement(
+      'CREATE INDEX IF NOT EXISTS idx_user_departments_user_department ON user_departments(user_id, department_id, deleted_at)',
+    );
+    await customStatement(
+      'CREATE INDEX IF NOT EXISTS idx_departments_active_crop ON departments(is_active, deleted_at, crop_id)',
+    );
+    await customStatement(
+      'CREATE INDEX IF NOT EXISTS idx_operators_department_active ON operators(department_id, is_active, deleted_at)',
+    );
+    await customStatement(
+      'CREATE INDEX IF NOT EXISTS idx_tasks_department_crop_active ON tasks(department_id, crop_id, is_active, deleted_at)',
+    );
+    await customStatement(
+      'CREATE INDEX IF NOT EXISTS idx_locations_crop_lot_network ON locations(crop_id, lot, network, sector, is_active, deleted_at)',
+    );
+    await customStatement(
+      'CREATE INDEX IF NOT EXISTS idx_dining_rooms_crop_lot_network ON dining_rooms(crop_id, lot, network, is_active, deleted_at)',
+    );
+    await customStatement(
+      'CREATE INDEX IF NOT EXISTS idx_records_department_date_status ON records(department_id, record_date, sync_status, deleted_at)',
+    );
+    await customStatement(
+      'CREATE INDEX IF NOT EXISTS idx_records_user_date ON records(user_code, record_date, deleted_at)',
+    );
+    await customStatement(
+      'CREATE INDEX IF NOT EXISTS idx_record_locations_record ON record_locations(record_id, deleted_at)',
+    );
+    await customStatement(
+      'CREATE INDEX IF NOT EXISTS idx_sync_queue_status_created ON sync_queue(status, created_at, deleted_at)',
+    );
+  }
+
+  Future<void> _ensureCoreCatalogData() async {
+    await into(roles).insert(
+      RolesCompanion.insert(
+        id: 'role_admin',
+        name: 'admin',
+        isAdmin: const Value(true),
+      ),
+      mode: InsertMode.insertOrIgnore,
+    );
+
+    await into(roles).insert(
+      RolesCompanion.insert(
+        id: 'role_user',
+        name: 'supervisor',
+        isAdmin: const Value(false),
+      ),
+      mode: InsertMode.insertOrIgnore,
+    );
+
+    await _ensureDefaultPositions();
+  }
+
+  Future<void> _ensureDefaultPositions() async {
+    final now = DateTime.now();
+
+    await into(positions).insert(
+      PositionsCompanion.insert(
+        id: 'position_lider',
+        name: 'líder',
+        canBeLeader: const Value(true),
+        canLogin: const Value(false),
+        createdAt: Value(now),
+        updatedAt: Value(now),
+      ),
+      mode: InsertMode.insertOrIgnore,
+    );
+
+    await into(positions).insert(
+      PositionsCompanion.insert(
+        id: 'position_supervisor',
+        name: 'supervisor',
+        canBeLeader: const Value(false),
+        canLogin: const Value(true),
+        createdAt: Value(now),
+        updatedAt: Value(now),
+      ),
+      mode: InsertMode.insertOrIgnore,
+    );
+
+    await into(positions).insert(
+      PositionsCompanion.insert(
+        id: 'position_operario',
+        name: 'operario',
+        canBeLeader: const Value(false),
+        canLogin: const Value(false),
+        createdAt: Value(now),
+        updatedAt: Value(now),
+      ),
+      mode: InsertMode.insertOrIgnore,
+    );
+
+    await into(positions).insert(
+      PositionsCompanion.insert(
+        id: 'position_otro',
+        name: 'otro',
+        canBeLeader: const Value(false),
+        canLogin: const Value(false),
+        createdAt: Value(now),
+        updatedAt: Value(now),
+      ),
+      mode: InsertMode.insertOrIgnore,
+    );
+  }
+
+  Future<void> seedDevelopmentData() async {
     await transaction(() async {
-      await into(roles).insertOnConflictUpdate(
-        RolesCompanion.insert(
-          id: 'role_admin',
-          name: 'admin',
-          isAdmin: const Value(true),
-        ),
-      );
-
-      await into(roles).insertOnConflictUpdate(
-        RolesCompanion.insert(
-          id: 'role_user',
-          name: 'usuario',
-          isAdmin: const Value(false),
-        ),
-      );
-
-      await into(users).insertOnConflictUpdate(
-        UsersCompanion.insert(
-          id: 'user_001',
-          code: '001',
-          fullName: 'Usuario Demo',
-          passwordPin: '123456',
-          roleId: 'role_user',
-        ),
-      );
-
-      await into(users).insertOnConflictUpdate(
-        UsersCompanion.insert(
-          id: 'user_002',
-          code: '002',
-          fullName: 'Usuario Un Departamento',
-          passwordPin: '123456',
-          roleId: 'role_user',
-        ),
-      );
-
-      await into(users).insertOnConflictUpdate(
-        UsersCompanion.insert(
-          id: 'user_admin',
-          code: 'admin',
-          fullName: 'Administrador Demo',
-          passwordPin: '123456',
-          roleId: 'role_admin',
-        ),
-      );
-
-      await into(departments).insertOnConflictUpdate(
-        DepartmentsCompanion.insert(
-          id: 'dep_labores_arandano',
-          name: 'Labores Arándano',
-        ),
-      );
-
-      await into(departments).insertOnConflictUpdate(
-        DepartmentsCompanion.insert(
-          id: 'dep_cosecha_arandano',
-          name: 'Cosecha Arándano',
-        ),
-      );
-
-      await into(departments).insertOnConflictUpdate(
-        DepartmentsCompanion.insert(
-          id: 'dep_palto_fondo_01',
-          name: 'Palto Fondo 01',
-        ),
-      );
-
-      await into(userDepartments).insertOnConflictUpdate(
-        UserDepartmentsCompanion.insert(
-          id: 'user_001_dep_labores',
-          userId: 'user_001',
-          departmentId: 'dep_labores_arandano',
-        ),
-      );
-
-      await into(userDepartments).insertOnConflictUpdate(
-        UserDepartmentsCompanion.insert(
-          id: 'user_001_dep_cosecha',
-          userId: 'user_001',
-          departmentId: 'dep_cosecha_arandano',
-        ),
-      );
-
-      await into(userDepartments).insertOnConflictUpdate(
-        UserDepartmentsCompanion.insert(
-          id: 'user_002_dep_palto',
-          userId: 'user_002',
-          departmentId: 'dep_palto_fondo_01',
-        ),
-      );
-
-      await into(userDepartments).insertOnConflictUpdate(
-        UserDepartmentsCompanion.insert(
-          id: 'admin_dep_labores',
-          userId: 'user_admin',
-          departmentId: 'dep_labores_arandano',
-        ),
-      );
-
-      await into(userDepartments).insertOnConflictUpdate(
-        UserDepartmentsCompanion.insert(
-          id: 'admin_dep_cosecha',
-          userId: 'user_admin',
-          departmentId: 'dep_cosecha_arandano',
-        ),
-      );
-
-      await into(userDepartments).insertOnConflictUpdate(
-        UserDepartmentsCompanion.insert(
-          id: 'admin_dep_palto',
-          userId: 'user_admin',
-          departmentId: 'dep_palto_fondo_01',
-        ),
-      );
-
-      await into(operators).insertOnConflictUpdate(
-        OperatorsCompanion.insert(
-          id: 'op_001',
-          code: 'OP001',
-          fullName: 'Operario Demo 01',
-          departmentId: const Value('dep_labores_arandano'),
-        ),
-      );
+      await _ensureCoreCatalogData();
 
       await into(crops).insertOnConflictUpdate(
         CropsCompanion.insert(id: 'crop_arandano', name: 'Arándano'),
@@ -526,126 +755,156 @@ class AppDatabase extends _$AppDatabase {
         CropsCompanion.insert(id: 'crop_palto', name: 'Palto'),
       );
 
-      await into(tasks).insertOnConflictUpdate(
-        TasksCompanion.insert(
-          id: 'task_poda',
+      await into(departments).insertOnConflictUpdate(
+        DepartmentsCompanion.insert(
+          id: 'dep_labores_arandano',
+          name: 'Labores Arándano',
+          cropId: const Value('crop_arandano'),
+        ),
+      );
+
+      await into(departments).insertOnConflictUpdate(
+        DepartmentsCompanion.insert(
+          id: 'dep_cosecha_arandano',
+          name: 'Cosecha Arándano',
+          cropId: const Value('crop_arandano'),
+        ),
+      );
+
+      await into(departments).insertOnConflictUpdate(
+        DepartmentsCompanion.insert(
+          id: 'dep_palto_fondo_01',
+          name: 'Palto, Fundo 1',
+          cropId: const Value('crop_palto'),
+        ),
+      );
+
+      await into(departments).insertOnConflictUpdate(
+        DepartmentsCompanion.insert(
+          id: 'dep_palto_fondo_02',
+          name: 'Palto, Fundo 2',
+          cropId: const Value('crop_palto'),
+        ),
+      );
+
+      await into(users).insertOnConflictUpdate(
+        UsersCompanion.insert(
+          id: 'user_admin',
+          code: '999999',
+          fullName: 'Administrador',
+          passwordPin: '123456',
+          roleId: 'role_admin',
+        ),
+      );
+
+      await into(operators).insertOnConflictUpdate(
+        OperatorsCompanion.insert(
+          id: 'op_ramos',
+          code: '422519',
+          fullName: 'Ramos',
+          departmentId: const Value('dep_palto_fondo_02'),
+          positionId: const Value('position_lider'),
+        ),
+      );
+
+      await into(operators).insertOnConflictUpdate(
+        OperatorsCompanion.insert(
+          id: 'op_apolinario',
+          code: '416737',
+          fullName: 'Apolinario',
+          departmentId: const Value('dep_palto_fondo_02'),
+          positionId: const Value('position_lider'),
+        ),
+      );
+
+      await into(operators).insertOnConflictUpdate(
+        OperatorsCompanion.insert(
+          id: 'op_angelo',
+          code: '376810',
+          fullName: 'Angelo',
           departmentId: const Value('dep_labores_arandano'),
-          name: 'Poda',
-          defaultDetail: const Value('Poda general'),
+          positionId: const Value('position_lider'),
         ),
       );
 
-      await into(tasks).insertOnConflictUpdate(
-        TasksCompanion.insert(
-          id: 'task_cosecha',
-          departmentId: const Value('dep_cosecha_arandano'),
-          name: 'Cosecha',
-          defaultDetail: const Value('Cosecha manual'),
-        ),
-      );
-
-      await into(locations).insertOnConflictUpdate(
+      final sampleLocations = <LocationsCompanion>[
         LocationsCompanion.insert(
-          id: 'loc_ar_l1_r1_s1',
+          id: 'loc_ar_7_2_13',
           cropId: 'crop_arandano',
-          lot: 'Lote 01',
-          network: 'Red 01',
-          sector: 'Sector 01',
-          ha: 1.25,
-          suggestedDiningRoom: const Value('Comedor 1'),
+          lot: '7',
+          network: '2',
+          sector: '13',
+          ha: 3.19,
+          suggestedDiningRoom: const Value('Comedor Arándano 7'),
         ),
-      );
-
-      await into(locations).insertOnConflictUpdate(
         LocationsCompanion.insert(
-          id: 'loc_ar_l1_r1_s2',
+          id: 'loc_ar_7_2_14',
           cropId: 'crop_arandano',
-          lot: 'Lote 01',
-          network: 'Red 01',
-          sector: 'Sector 02',
-          ha: 1.40,
-          suggestedDiningRoom: const Value('Comedor 1'),
+          lot: '7',
+          network: '2',
+          sector: '14',
+          ha: 2.79,
+          suggestedDiningRoom: const Value('Comedor Arándano 7'),
         ),
-      );
-
-      await into(locations).insertOnConflictUpdate(
         LocationsCompanion.insert(
-          id: 'loc_pa_l5_r2_s3',
+          id: 'loc_ar_7_2_15',
+          cropId: 'crop_arandano',
+          lot: '7',
+          network: '2',
+          sector: '15',
+          ha: 1.76,
+          suggestedDiningRoom: const Value('Comedor Arándano 7'),
+        ),
+        LocationsCompanion.insert(
+          id: 'loc_pa_16_5_55',
           cropId: 'crop_palto',
-          lot: 'Lote 05',
-          network: 'Red 02',
-          sector: 'Sector 03',
-          ha: 2.10,
-          suggestedDiningRoom: const Value('Comedor 2'),
+          lot: '16',
+          network: '5',
+          sector: '55',
+          ha: 1.80,
+          suggestedDiningRoom: const Value('Comedor Palto 16'),
+        ),
+        LocationsCompanion.insert(
+          id: 'loc_pa_16_5_56',
+          cropId: 'crop_palto',
+          lot: '16',
+          network: '5',
+          sector: '56',
+          ha: 0.39,
+          suggestedDiningRoom: const Value('Comedor Palto 16'),
+        ),
+        LocationsCompanion.insert(
+          id: 'loc_pa_16_5_57',
+          cropId: 'crop_palto',
+          lot: '16',
+          network: '5',
+          sector: '57',
+          ha: 2.82,
+          suggestedDiningRoom: const Value('Comedor Palto 16'),
+        ),
+      ];
+
+      for (final location in sampleLocations) {
+        await into(locations).insertOnConflictUpdate(location);
+      }
+
+      await into(diningRooms).insertOnConflictUpdate(
+        DiningRoomsCompanion.insert(
+          id: 'dining_arandano_7_2',
+          cropId: 'crop_arandano',
+          name: 'Comedor Arándano 7',
+          lot: const Value('7'),
+          network: const Value('2'),
         ),
       );
 
-      await into(formFieldConfigs).insertOnConflictUpdate(
-        FormFieldConfigsCompanion.insert(
-          id: 'field_labores_fecha',
-          departmentId: 'dep_labores_arandano',
-          fieldKey: 'recordDate',
-          label: 'Fecha',
-          fieldType: 'date',
-          isRequired: const Value(true),
-          sortOrder: const Value(1),
-        ),
-      );
-
-      await into(formFieldConfigs).insertOnConflictUpdate(
-        FormFieldConfigsCompanion.insert(
-          id: 'field_labores_cultivo',
-          departmentId: 'dep_labores_arandano',
-          fieldKey: 'cropId',
-          label: 'Cultivo',
-          fieldType: 'select',
-          isRequired: const Value(true),
-          sortOrder: const Value(2),
-        ),
-      );
-
-      await into(formFieldConfigs).insertOnConflictUpdate(
-        FormFieldConfigsCompanion.insert(
-          id: 'field_labores_labor',
-          departmentId: 'dep_labores_arandano',
-          fieldKey: 'taskId',
-          label: 'Labor',
-          fieldType: 'select',
-          isRequired: const Value(true),
-          sortOrder: const Value(3),
-        ),
-      );
-
-      await into(tableColumnConfigs).insertOnConflictUpdate(
-        TableColumnConfigsCompanion.insert(
-          id: 'column_records_fecha',
-          departmentId: const Value<String?>(null),
-          tableKey: 'records',
-          columnKey: 'recordDate',
-          label: 'Fecha',
-          sortOrder: const Value(1),
-        ),
-      );
-
-      await into(tableColumnConfigs).insertOnConflictUpdate(
-        TableColumnConfigsCompanion.insert(
-          id: 'column_records_semana',
-          departmentId: const Value<String?>(null),
-          tableKey: 'records',
-          columnKey: 'weekNumber',
-          label: 'Semana',
-          sortOrder: const Value(2),
-        ),
-      );
-
-      await into(tableColumnConfigs).insertOnConflictUpdate(
-        TableColumnConfigsCompanion.insert(
-          id: 'column_records_ratio',
-          departmentId: const Value<String?>(null),
-          tableKey: 'records',
-          columnKey: 'ratio',
-          label: 'Ratio',
-          sortOrder: const Value(3),
+      await into(diningRooms).insertOnConflictUpdate(
+        DiningRoomsCompanion.insert(
+          id: 'dining_palto_16_5',
+          cropId: 'crop_palto',
+          name: 'Comedor Palto 16',
+          lot: const Value('16'),
+          network: const Value('5'),
         ),
       );
     });
@@ -671,6 +930,13 @@ class AppDatabase extends _$AppDatabase {
     return (select(roles)
           ..where((tbl) => tbl.id.equals(roleId) & tbl.deletedAt.isNull()))
         .getSingleOrNull();
+  }
+
+  Future<List<Department>> getActiveDepartments() {
+    return (select(departments)
+          ..where((tbl) => tbl.isActive.equals(true) & tbl.deletedAt.isNull())
+          ..orderBy([(tbl) => OrderingTerm.asc(tbl.name)]))
+        .get();
   }
 
   Future<List<Department>> getDepartmentsForUserCode(String userCode) async {
@@ -729,6 +995,27 @@ class AppDatabase extends _$AppDatabase {
             (tbl) => OrderingTerm.asc(tbl.network),
             (tbl) => OrderingTerm.asc(tbl.sector),
           ]))
+        .get();
+  }
+
+  Future<List<DiningRoom>> getActiveDiningRoomsByCropLotNetwork({
+    required String cropId,
+    required String lot,
+    required String network,
+  }) {
+    final cleanLot = AgroLocalValueFormatters.compactLot(lot);
+    final cleanNetwork = AgroLocalValueFormatters.compactNetwork(network);
+
+    return (select(diningRooms)
+          ..where(
+            (tbl) =>
+                tbl.cropId.equals(cropId) &
+                tbl.lot.equals(cleanLot) &
+                tbl.network.equals(cleanNetwork) &
+                tbl.isActive.equals(true) &
+                tbl.deletedAt.isNull(),
+          )
+          ..orderBy([(tbl) => OrderingTerm.asc(tbl.name)]))
         .get();
   }
 

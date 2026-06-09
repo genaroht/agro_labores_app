@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../data/local/app_database.dart';
@@ -16,6 +17,7 @@ class AdminDepartmentsPage extends ConsumerStatefulWidget {
 class _AdminDepartmentsPageState extends ConsumerState<AdminDepartmentsPage> {
   bool _isLoading = false;
   List<Department> _items = [];
+  List<Crop> _crops = [];
 
   @override
   void initState() {
@@ -28,15 +30,19 @@ class _AdminDepartmentsPageState extends ConsumerState<AdminDepartmentsPage> {
 
     try {
       final repository = ref.read(adminRepositoryProvider);
-      await repository.ensureDemoData();
+      await repository.ensureDevelopmentSeedData();
 
       final items = await repository.getDepartments();
+      final crops = await repository.getCrops();
 
       if (!mounted) {
         return;
       }
 
-      setState(() => _items = items);
+      setState(() {
+        _items = items;
+        _crops = crops;
+      });
     } finally {
       if (mounted) {
         setState(() => _isLoading = false);
@@ -47,6 +53,7 @@ class _AdminDepartmentsPageState extends ConsumerState<AdminDepartmentsPage> {
   Future<void> _openForm([Department? item]) async {
     final repository = ref.read(adminRepositoryProvider);
     final nameController = TextEditingController(text: item?.name ?? '');
+    String? cropId = item?.cropId ?? _firstActiveCropId();
     var isActive = item?.isActive ?? true;
 
     final saved = await showDialog<bool>(
@@ -57,22 +64,46 @@ class _AdminDepartmentsPageState extends ConsumerState<AdminDepartmentsPage> {
             title: Text(
               item == null ? 'Nuevo departamento' : 'Editar departamento',
             ),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextField(
-                  controller: nameController,
-                  decoration: const InputDecoration(labelText: 'Nombre'),
-                ),
-                const SizedBox(height: 12),
-                SwitchListTile(
-                  title: const Text('Activo'),
-                  value: isActive,
-                  onChanged: (value) {
-                    setDialogState(() => isActive = value);
-                  },
-                ),
-              ],
+            content: SizedBox(
+              width: 420,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: nameController,
+                    decoration: const InputDecoration(labelText: 'Nombre'),
+                  ),
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<String>(
+                    initialValue: cropId,
+                    decoration: const InputDecoration(
+                      labelText: 'Cultivo principal',
+                    ),
+                    items: _crops
+                        .where(
+                          (crop) => crop.isActive || crop.id == item?.cropId,
+                        )
+                        .map(
+                          (crop) => DropdownMenuItem(
+                            value: crop.id,
+                            child: Text(crop.name),
+                          ),
+                        )
+                        .toList(),
+                    onChanged: (value) {
+                      setDialogState(() => cropId = value);
+                    },
+                  ),
+                  const SizedBox(height: 12),
+                  SwitchListTile(
+                    title: const Text('Activo'),
+                    value: isActive,
+                    onChanged: (value) {
+                      setDialogState(() => isActive = value);
+                    },
+                  ),
+                ],
+              ),
             ),
             actions: [
               TextButton(
@@ -85,6 +116,7 @@ class _AdminDepartmentsPageState extends ConsumerState<AdminDepartmentsPage> {
                     await repository.saveDepartment(
                       existing: item,
                       name: nameController.text,
+                      cropId: cropId ?? '',
                       isActive: isActive,
                     );
 
@@ -93,13 +125,7 @@ class _AdminDepartmentsPageState extends ConsumerState<AdminDepartmentsPage> {
                     }
                   } catch (error) {
                     if (context.mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text(
-                            error.toString().replaceFirst('Exception: ', ''),
-                          ),
-                        ),
-                      );
+                      _showError(context, error);
                     }
                   }
                 },
@@ -125,10 +151,6 @@ class _AdminDepartmentsPageState extends ConsumerState<AdminDepartmentsPage> {
 
   @override
   Widget build(BuildContext context) {
-    if (!ref.watch(sessionProvider).isAdmin) {
-      return _adminOnlyScaffold('Departamentos');
-    }
-
     return _CatalogScaffold(
       title: 'Departamentos',
       isLoading: _isLoading,
@@ -142,7 +164,9 @@ class _AdminDepartmentsPageState extends ConsumerState<AdminDepartmentsPage> {
                   item.isActive ? Icons.business_outlined : Icons.block,
                 ),
                 title: Text(item.name),
-                subtitle: Text(item.isActive ? 'Activo' : 'Inactivo'),
+                subtitle: Text(
+                  'Cultivo: ${_cropName(item.cropId)} | ${item.isActive ? 'Activo' : 'Inactivo'}',
+                ),
                 trailing: _EditDeleteActions(
                   onEdit: () => _openForm(item),
                   onDelete: () => _delete(item),
@@ -152,6 +176,30 @@ class _AdminDepartmentsPageState extends ConsumerState<AdminDepartmentsPage> {
           )
           .toList(),
     );
+  }
+
+  String? _firstActiveCropId() {
+    for (final crop in _crops) {
+      if (crop.isActive) {
+        return crop.id;
+      }
+    }
+
+    return null;
+  }
+
+  String _cropName(String? id) {
+    if (id == null) {
+      return '-';
+    }
+
+    for (final crop in _crops) {
+      if (crop.id == id) {
+        return crop.name;
+      }
+    }
+
+    return id;
   }
 }
 
@@ -166,6 +214,7 @@ class _AdminOperatorsPageState extends ConsumerState<AdminOperatorsPage> {
   bool _isLoading = false;
   List<FarmOperator> _items = [];
   List<Department> _departments = [];
+  List<OperatorPosition> _positions = [];
 
   @override
   void initState() {
@@ -178,10 +227,19 @@ class _AdminOperatorsPageState extends ConsumerState<AdminOperatorsPage> {
 
     try {
       final repository = ref.read(adminRepositoryProvider);
-      await repository.ensureDemoData();
+      final session = ref.read(sessionProvider);
+      await repository.ensureDevelopmentSeedData();
 
-      final items = await repository.getOperators();
-      final departments = await repository.getDepartments();
+      final allowedDepartmentIds = session.assignedDepartments
+          .map((department) => department.id)
+          .toList();
+      final items = await repository.getOperators(
+        allowedDepartmentIds: session.isAdmin ? null : allowedDepartmentIds,
+      );
+      final departments = session.isAdmin
+          ? await repository.getDepartments()
+          : await repository.getDepartmentsForSupervisor(allowedDepartmentIds);
+      final positions = await repository.getPositions();
 
       if (!mounted) {
         return;
@@ -190,6 +248,7 @@ class _AdminOperatorsPageState extends ConsumerState<AdminOperatorsPage> {
       setState(() {
         _items = items;
         _departments = departments;
+        _positions = positions;
       });
     } finally {
       if (mounted) {
@@ -200,11 +259,13 @@ class _AdminOperatorsPageState extends ConsumerState<AdminOperatorsPage> {
 
   Future<void> _openForm([FarmOperator? item]) async {
     final repository = ref.read(adminRepositoryProvider);
+    final session = ref.read(sessionProvider);
 
     final codeController = TextEditingController(text: item?.code ?? '');
     final nameController = TextEditingController(text: item?.fullName ?? '');
 
-    String? departmentId = item?.departmentId;
+    String? departmentId = item?.departmentId ?? _defaultDepartmentId();
+    String? positionId = item?.positionId ?? _defaultPositionId();
     var isActive = item?.isActive ?? true;
 
     final saved = await showDialog<bool>(
@@ -212,50 +273,87 @@ class _AdminOperatorsPageState extends ConsumerState<AdminOperatorsPage> {
       builder: (context) {
         return StatefulBuilder(
           builder: (context, setDialogState) => AlertDialog(
-            title: Text(item == null ? 'Nuevo operario' : 'Editar operario'),
+            title: Text(
+              item == null
+                  ? 'Nueva persona/operario'
+                  : 'Editar persona/operario',
+            ),
             content: SizedBox(
-              width: 420,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  TextField(
-                    controller: codeController,
-                    decoration: const InputDecoration(labelText: 'Código'),
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: nameController,
-                    decoration: const InputDecoration(
-                      labelText: 'Nombre completo',
+              width: 460,
+              child: SingleChildScrollView(
+                child: Column(
+                  children: [
+                    TextField(
+                      controller: codeController,
+                      keyboardType: TextInputType.number,
+                      inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                      decoration: const InputDecoration(labelText: 'Código'),
                     ),
-                  ),
-                  const SizedBox(height: 12),
-                  DropdownButtonFormField<String>(
-                    initialValue: departmentId,
-                    decoration: const InputDecoration(
-                      labelText: 'Departamento',
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: nameController,
+                      textCapitalization: TextCapitalization.words,
+                      decoration: const InputDecoration(
+                        labelText: 'Nombre completo',
+                      ),
                     ),
-                    items: _departments
-                        .map(
-                          (department) => DropdownMenuItem(
-                            value: department.id,
-                            child: Text(department.name),
-                          ),
-                        )
-                        .toList(),
-                    onChanged: (value) {
-                      setDialogState(() => departmentId = value);
-                    },
-                  ),
-                  const SizedBox(height: 12),
-                  SwitchListTile(
-                    title: const Text('Activo'),
-                    value: isActive,
-                    onChanged: (value) {
-                      setDialogState(() => isActive = value);
-                    },
-                  ),
-                ],
+                    const SizedBox(height: 12),
+                    DropdownButtonFormField<String>(
+                      initialValue: departmentId,
+                      decoration: const InputDecoration(
+                        labelText: 'Departamento',
+                      ),
+                      items: _departments
+                          .where(
+                            (department) =>
+                                department.isActive ||
+                                department.id == item?.departmentId,
+                          )
+                          .map(
+                            (department) => DropdownMenuItem(
+                              value: department.id,
+                              child: Text(department.name),
+                            ),
+                          )
+                          .toList(),
+                      onChanged: (value) {
+                        setDialogState(() => departmentId = value);
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                    DropdownButtonFormField<String>(
+                      initialValue: positionId,
+                      decoration: const InputDecoration(
+                        labelText: 'Cargo de la persona',
+                        helperText: 'Cargo no es rol del sistema',
+                      ),
+                      items: _positions
+                          .where(
+                            (position) =>
+                                position.isActive ||
+                                position.id == item?.positionId,
+                          )
+                          .map(
+                            (position) => DropdownMenuItem(
+                              value: position.id,
+                              child: Text(position.name),
+                            ),
+                          )
+                          .toList(),
+                      onChanged: (value) {
+                        setDialogState(() => positionId = value);
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                    SwitchListTile(
+                      title: const Text('Activo'),
+                      value: isActive,
+                      onChanged: (value) {
+                        setDialogState(() => isActive = value);
+                      },
+                    ),
+                  ],
+                ),
               ),
             ),
             actions: [
@@ -270,8 +368,13 @@ class _AdminOperatorsPageState extends ConsumerState<AdminOperatorsPage> {
                       existing: item,
                       code: codeController.text,
                       fullName: nameController.text,
-                      departmentId: departmentId,
+                      departmentId: departmentId ?? '',
+                      positionId: positionId ?? '',
                       isActive: isActive,
+                      isAdmin: session.isAdmin,
+                      allowedDepartmentIds: session.assignedDepartments
+                          .map((department) => department.id)
+                          .toList(),
                     );
 
                     if (context.mounted) {
@@ -279,13 +382,7 @@ class _AdminOperatorsPageState extends ConsumerState<AdminOperatorsPage> {
                     }
                   } catch (error) {
                     if (context.mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text(
-                            error.toString().replaceFirst('Exception: ', ''),
-                          ),
-                        ),
-                      );
+                      _showError(context, error);
                     }
                   }
                 },
@@ -312,12 +409,12 @@ class _AdminOperatorsPageState extends ConsumerState<AdminOperatorsPage> {
 
   @override
   Widget build(BuildContext context) {
-    if (!ref.watch(sessionProvider).isAdmin) {
-      return _adminOnlyScaffold('Operarios');
-    }
+    final session = ref.watch(sessionProvider);
 
     return _CatalogScaffold(
-      title: 'Operarios',
+      title: session.isAdmin
+          ? 'Operarios / Personas'
+          : 'Personas del departamento',
       isLoading: _isLoading,
       onRefresh: _load,
       onNew: () => _openForm(),
@@ -330,17 +427,51 @@ class _AdminOperatorsPageState extends ConsumerState<AdminOperatorsPage> {
                 ),
                 title: Text(item.fullName),
                 subtitle: Text(
-                  'Código: ${item.code} | Departamento: ${_departmentName(item.departmentId)} | ${item.isActive ? 'Activo' : 'Inactivo'}',
+                  'Código: ${item.code} | Departamento: ${_departmentName(item.departmentId)} | Cargo: ${_positionName(item.positionId)} | ${item.isActive ? 'Activo' : 'Inactivo'}',
                 ),
-                trailing: _EditDeleteActions(
-                  onEdit: () => _openForm(item),
-                  onDelete: () => _delete(item),
-                ),
+                trailing: session.isAdmin
+                    ? _EditDeleteActions(
+                        onEdit: () => _openForm(item),
+                        onDelete: () => _delete(item),
+                      )
+                    : IconButton(
+                        tooltip: 'Editar',
+                        onPressed: () => _openForm(item),
+                        icon: const Icon(Icons.edit),
+                      ),
               ),
             ),
           )
           .toList(),
     );
+  }
+
+  String? _defaultDepartmentId() {
+    final activeDepartments = _departments
+        .where((department) => department.isActive)
+        .toList();
+
+    if (activeDepartments.length == 1) {
+      return activeDepartments.first.id;
+    }
+
+    return null;
+  }
+
+  String? _defaultPositionId() {
+    for (final position in _positions) {
+      if (position.isActive && position.name.toLowerCase() == 'operario') {
+        return position.id;
+      }
+    }
+
+    for (final position in _positions) {
+      if (position.isActive) {
+        return position.id;
+      }
+    }
+
+    return null;
   }
 
   String _departmentName(String? id) {
@@ -351,6 +482,20 @@ class _AdminOperatorsPageState extends ConsumerState<AdminOperatorsPage> {
     for (final department in _departments) {
       if (department.id == id) {
         return department.name;
+      }
+    }
+
+    return id;
+  }
+
+  String _positionName(String? id) {
+    if (id == null) {
+      return '-';
+    }
+
+    for (final position in _positions) {
+      if (position.id == id) {
+        return position.name;
       }
     }
 
@@ -380,7 +525,7 @@ class _AdminCropsPageState extends ConsumerState<AdminCropsPage> {
 
     try {
       final repository = ref.read(adminRepositoryProvider);
-      await repository.ensureDemoData();
+      await repository.ensureDevelopmentSeedData();
 
       final items = await repository.getCrops();
 
@@ -412,6 +557,7 @@ class _AdminCropsPageState extends ConsumerState<AdminCropsPage> {
               children: [
                 TextField(
                   controller: nameController,
+                  textCapitalization: TextCapitalization.words,
                   decoration: const InputDecoration(labelText: 'Nombre'),
                 ),
                 const SizedBox(height: 12),
@@ -443,13 +589,7 @@ class _AdminCropsPageState extends ConsumerState<AdminCropsPage> {
                     }
                   } catch (error) {
                     if (context.mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text(
-                            error.toString().replaceFirst('Exception: ', ''),
-                          ),
-                        ),
-                      );
+                      _showError(context, error);
                     }
                   }
                 },
@@ -475,10 +615,6 @@ class _AdminCropsPageState extends ConsumerState<AdminCropsPage> {
 
   @override
   Widget build(BuildContext context) {
-    if (!ref.watch(sessionProvider).isAdmin) {
-      return _adminOnlyScaffold('Cultivos');
-    }
-
     return _CatalogScaffold(
       title: 'Cultivos',
       isLoading: _isLoading,
@@ -516,6 +652,7 @@ class _AdminTasksPageState extends ConsumerState<AdminTasksPage> {
   bool _isLoading = false;
   List<FarmTask> _items = [];
   List<Department> _departments = [];
+  List<Crop> _crops = [];
 
   @override
   void initState() {
@@ -528,10 +665,11 @@ class _AdminTasksPageState extends ConsumerState<AdminTasksPage> {
 
     try {
       final repository = ref.read(adminRepositoryProvider);
-      await repository.ensureDemoData();
+      await repository.ensureDevelopmentSeedData();
 
       final items = await repository.getTasks();
       final departments = await repository.getDepartments();
+      final crops = await repository.getCrops();
 
       if (!mounted) {
         return;
@@ -540,6 +678,7 @@ class _AdminTasksPageState extends ConsumerState<AdminTasksPage> {
       setState(() {
         _items = items;
         _departments = departments;
+        _crops = crops;
       });
     } finally {
       if (mounted) {
@@ -550,13 +689,268 @@ class _AdminTasksPageState extends ConsumerState<AdminTasksPage> {
 
   Future<void> _openForm([FarmTask? item]) async {
     final repository = ref.read(adminRepositoryProvider);
-
+    final codeController = TextEditingController(text: item?.code ?? '');
     final nameController = TextEditingController(text: item?.name ?? '');
     final detailController = TextEditingController(
       text: item?.defaultDetail ?? '',
     );
+    String? departmentId = item?.departmentId ?? _firstActiveDepartmentId();
+    var isActive = item?.isActive ?? true;
 
-    String? departmentId = item?.departmentId;
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            final selectedDepartment = _departmentById(departmentId);
+            final cropName = _cropName(selectedDepartment?.cropId);
+
+            return AlertDialog(
+              title: Text(item == null ? 'Nueva labor' : 'Editar labor'),
+              content: SizedBox(
+                width: 460,
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      DropdownButtonFormField<String>(
+                        initialValue: departmentId,
+                        decoration: const InputDecoration(
+                          labelText: 'Departamento *',
+                        ),
+                        items: _departments
+                            .where(
+                              (department) =>
+                                  department.isActive ||
+                                  department.id == item?.departmentId,
+                            )
+                            .map(
+                              (department) => DropdownMenuItem(
+                                value: department.id,
+                                child: Text(department.name),
+                              ),
+                            )
+                            .toList(),
+                        onChanged: (value) {
+                          setDialogState(() => departmentId = value);
+                        },
+                      ),
+                      const SizedBox(height: 12),
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          'Cultivo asociado: ${cropName ?? '-'}',
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: codeController,
+                        textCapitalization: TextCapitalization.characters,
+                        decoration: const InputDecoration(
+                          labelText: 'Código de labor *',
+                          helperText: 'Debe ser único dentro del departamento',
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: nameController,
+                        textCapitalization: TextCapitalization.sentences,
+                        decoration: const InputDecoration(
+                          labelText: 'Descripción de labor *',
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: detailController,
+                        textCapitalization: TextCapitalization.sentences,
+                        decoration: const InputDecoration(
+                          labelText: 'Detalle por defecto opcional',
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      SwitchListTile(
+                        title: const Text('Activo'),
+                        value: isActive,
+                        onChanged: (value) {
+                          setDialogState(() => isActive = value);
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(false),
+                  child: const Text('Cancelar'),
+                ),
+                FilledButton(
+                  onPressed: () async {
+                    try {
+                      await repository.saveTask(
+                        existing: item,
+                        code: codeController.text,
+                        name: nameController.text,
+                        departmentId: departmentId ?? '',
+                        defaultDetail: detailController.text.trim().isEmpty
+                            ? null
+                            : detailController.text.trim(),
+                        isActive: isActive,
+                      );
+
+                      if (context.mounted) {
+                        Navigator.of(context).pop(true);
+                      }
+                    } catch (error) {
+                      if (context.mounted) {
+                        _showError(context, error);
+                      }
+                    }
+                  },
+                  child: const Text('Guardar'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    if (saved == true) {
+      await _load();
+    }
+
+    codeController.dispose();
+    nameController.dispose();
+    detailController.dispose();
+  }
+
+  Future<void> _delete(FarmTask item) async {
+    await ref.read(adminRepositoryProvider).deleteTask(item);
+    await _load();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return _CatalogScaffold(
+      title: 'Labores',
+      isLoading: _isLoading,
+      onRefresh: _load,
+      onNew: () => _openForm(),
+      children: _items
+          .map(
+            (item) => Card(
+              child: ListTile(
+                leading: Icon(item.isActive ? Icons.work_outline : Icons.block),
+                title: Text('${item.code ?? '-'} | ${item.name}'),
+                subtitle: Text(
+                  'Departamento: ${_departmentName(item.departmentId)} | Cultivo: ${_cropName(item.cropId) ?? '-'} | ${item.isActive ? 'Activo' : 'Inactivo'}',
+                ),
+                trailing: _EditDeleteActions(
+                  onEdit: () => _openForm(item),
+                  onDelete: () => _delete(item),
+                ),
+              ),
+            ),
+          )
+          .toList(),
+    );
+  }
+
+  String? _firstActiveDepartmentId() {
+    for (final department in _departments) {
+      if (department.isActive && department.cropId != null) {
+        return department.id;
+      }
+    }
+
+    return null;
+  }
+
+  Department? _departmentById(String? id) {
+    if (id == null) {
+      return null;
+    }
+
+    for (final department in _departments) {
+      if (department.id == id) {
+        return department;
+      }
+    }
+
+    return null;
+  }
+
+  String _departmentName(String? id) {
+    return _departmentById(id)?.name ?? '-';
+  }
+
+  String? _cropName(String? id) {
+    if (id == null) {
+      return null;
+    }
+
+    for (final crop in _crops) {
+      if (crop.id == id) {
+        return crop.name;
+      }
+    }
+
+    return id;
+  }
+}
+
+class AdminDiningRoomsPage extends ConsumerStatefulWidget {
+  const AdminDiningRoomsPage({super.key});
+
+  @override
+  ConsumerState<AdminDiningRoomsPage> createState() =>
+      _AdminDiningRoomsPageState();
+}
+
+class _AdminDiningRoomsPageState extends ConsumerState<AdminDiningRoomsPage> {
+  bool _isLoading = false;
+  List<DiningRoom> _items = [];
+  List<Crop> _crops = [];
+
+  @override
+  void initState() {
+    super.initState();
+    Future.microtask(_load);
+  }
+
+  Future<void> _load() async {
+    setState(() => _isLoading = true);
+
+    try {
+      final repository = ref.read(adminRepositoryProvider);
+      await repository.ensureDevelopmentSeedData();
+
+      final items = await repository.getDiningRooms();
+      final crops = await repository.getCrops();
+
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _items = items;
+        _crops = crops;
+      });
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+    }
+  }
+
+  Future<void> _openForm([DiningRoom? item]) async {
+    final repository = ref.read(adminRepositoryProvider);
+    final nameController = TextEditingController(text: item?.name ?? '');
+    final lotController = TextEditingController(text: item?.lot ?? '');
+    final networkController = TextEditingController(text: item?.network ?? '');
+    String? cropId = item?.cropId ?? _firstActiveCropId();
     var isActive = item?.isActive ?? true;
 
     final saved = await showDialog<bool>(
@@ -564,50 +958,65 @@ class _AdminTasksPageState extends ConsumerState<AdminTasksPage> {
       builder: (context) {
         return StatefulBuilder(
           builder: (context, setDialogState) => AlertDialog(
-            title: Text(item == null ? 'Nueva labor' : 'Editar labor'),
+            title: Text(item == null ? 'Nuevo comedor' : 'Editar comedor'),
             content: SizedBox(
-              width: 420,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  TextField(
-                    controller: nameController,
-                    decoration: const InputDecoration(labelText: 'Nombre'),
-                  ),
-                  const SizedBox(height: 12),
-                  DropdownButtonFormField<String>(
-                    initialValue: departmentId,
-                    decoration: const InputDecoration(
-                      labelText: 'Departamento',
+              width: 460,
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    TextField(
+                      controller: nameController,
+                      textCapitalization: TextCapitalization.words,
+                      decoration: const InputDecoration(labelText: 'Nombre *'),
                     ),
-                    items: _departments
-                        .map(
-                          (department) => DropdownMenuItem(
-                            value: department.id,
-                            child: Text(department.name),
-                          ),
-                        )
-                        .toList(),
-                    onChanged: (value) {
-                      setDialogState(() => departmentId = value);
-                    },
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: detailController,
-                    decoration: const InputDecoration(
-                      labelText: 'Detalle por defecto',
+                    const SizedBox(height: 12),
+                    DropdownButtonFormField<String>(
+                      initialValue: cropId,
+                      decoration: const InputDecoration(labelText: 'Cultivo *'),
+                      items: _crops
+                          .where(
+                            (crop) => crop.isActive || crop.id == item?.cropId,
+                          )
+                          .map(
+                            (crop) => DropdownMenuItem(
+                              value: crop.id,
+                              child: Text(crop.name),
+                            ),
+                          )
+                          .toList(),
+                      onChanged: (value) {
+                        setDialogState(() => cropId = value);
+                      },
                     ),
-                  ),
-                  const SizedBox(height: 12),
-                  SwitchListTile(
-                    title: const Text('Activo'),
-                    value: isActive,
-                    onChanged: (value) {
-                      setDialogState(() => isActive = value);
-                    },
-                  ),
-                ],
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: lotController,
+                      decoration: const InputDecoration(
+                        labelText: 'Lote *',
+                        helperText:
+                            'Puede escribir 4 o Lote 4; se guardará como 4',
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: networkController,
+                      decoration: const InputDecoration(
+                        labelText: 'Red *',
+                        helperText:
+                            'Puede escribir 2, R2 o Red 2; se guardará como 2',
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    SwitchListTile(
+                      title: const Text('Activo'),
+                      value: isActive,
+                      onChanged: (value) {
+                        setDialogState(() => isActive = value);
+                      },
+                    ),
+                  ],
+                ),
               ),
             ),
             actions: [
@@ -618,13 +1027,12 @@ class _AdminTasksPageState extends ConsumerState<AdminTasksPage> {
               FilledButton(
                 onPressed: () async {
                   try {
-                    await repository.saveTask(
+                    await repository.saveDiningRoom(
                       existing: item,
                       name: nameController.text,
-                      departmentId: departmentId,
-                      defaultDetail: detailController.text.trim().isEmpty
-                          ? null
-                          : detailController.text.trim(),
+                      cropId: cropId ?? '',
+                      lot: lotController.text,
+                      network: networkController.text,
                       isActive: isActive,
                     );
 
@@ -633,13 +1041,7 @@ class _AdminTasksPageState extends ConsumerState<AdminTasksPage> {
                     }
                   } catch (error) {
                     if (context.mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text(
-                            error.toString().replaceFirst('Exception: ', ''),
-                          ),
-                        ),
-                      );
+                      _showError(context, error);
                     }
                   }
                 },
@@ -656,22 +1058,19 @@ class _AdminTasksPageState extends ConsumerState<AdminTasksPage> {
     }
 
     nameController.dispose();
-    detailController.dispose();
+    lotController.dispose();
+    networkController.dispose();
   }
 
-  Future<void> _delete(FarmTask item) async {
-    await ref.read(adminRepositoryProvider).deleteTask(item);
+  Future<void> _delete(DiningRoom item) async {
+    await ref.read(adminRepositoryProvider).deleteDiningRoom(item);
     await _load();
   }
 
   @override
   Widget build(BuildContext context) {
-    if (!ref.watch(sessionProvider).isAdmin) {
-      return _adminOnlyScaffold('Labores');
-    }
-
     return _CatalogScaffold(
-      title: 'Labores',
+      title: 'Comedores',
       isLoading: _isLoading,
       onRefresh: _load,
       onNew: () => _openForm(),
@@ -679,10 +1078,12 @@ class _AdminTasksPageState extends ConsumerState<AdminTasksPage> {
           .map(
             (item) => Card(
               child: ListTile(
-                leading: Icon(item.isActive ? Icons.work_outline : Icons.block),
+                leading: Icon(
+                  item.isActive ? Icons.restaurant_outlined : Icons.block,
+                ),
                 title: Text(item.name),
                 subtitle: Text(
-                  'Departamento: ${_departmentName(item.departmentId)} | ${item.isActive ? 'Activo' : 'Inactivo'}',
+                  'Cultivo: ${_cropName(item.cropId)} | Lote: ${AgroLocalValueFormatters.compactLot(item.lot ?? '-')} | Red: ${AgroLocalValueFormatters.compactNetwork(item.network ?? '-')} | ${item.isActive ? 'Activo' : 'Inactivo'}',
                 ),
                 trailing: _EditDeleteActions(
                   onEdit: () => _openForm(item),
@@ -695,14 +1096,20 @@ class _AdminTasksPageState extends ConsumerState<AdminTasksPage> {
     );
   }
 
-  String _departmentName(String? id) {
-    if (id == null) {
-      return '-';
+  String? _firstActiveCropId() {
+    for (final crop in _crops) {
+      if (crop.isActive) {
+        return crop.id;
+      }
     }
 
-    for (final department in _departments) {
-      if (department.id == id) {
-        return department.name;
+    return null;
+  }
+
+  String _cropName(String id) {
+    for (final crop in _crops) {
+      if (crop.id == id) {
+        return crop.name;
       }
     }
 
@@ -733,7 +1140,7 @@ class _AdminLocationsPageState extends ConsumerState<AdminLocationsPage> {
 
     try {
       final repository = ref.read(adminRepositoryProvider);
-      await repository.ensureDemoData();
+      await repository.ensureDevelopmentSeedData();
 
       final items = await repository.getLocations();
       final crops = await repository.getCrops();
@@ -755,9 +1162,7 @@ class _AdminLocationsPageState extends ConsumerState<AdminLocationsPage> {
 
   Future<void> _openForm([LocationEntry? item]) async {
     final repository = ref.read(adminRepositoryProvider);
-
-    String? cropId = item?.cropId ?? (_crops.isEmpty ? null : _crops.first.id);
-
+    String? cropId = item?.cropId ?? _firstActiveCropId();
     final lotController = TextEditingController(text: item?.lot ?? '');
     final networkController = TextEditingController(text: item?.network ?? '');
     final sectorController = TextEditingController(text: item?.sector ?? '');
@@ -765,7 +1170,6 @@ class _AdminLocationsPageState extends ConsumerState<AdminLocationsPage> {
     final diningController = TextEditingController(
       text: item?.suggestedDiningRoom ?? '',
     );
-
     var isActive = item?.isActive ?? true;
 
     final saved = await showDialog<bool>(
@@ -848,17 +1252,13 @@ class _AdminLocationsPageState extends ConsumerState<AdminLocationsPage> {
                       haController.text.replaceAll(',', '.'),
                     );
 
-                    if (cropId == null) {
-                      throw Exception('Seleccione cultivo.');
-                    }
-
                     if (ha == null) {
                       throw Exception('Ingrese Ha válida.');
                     }
 
                     await repository.saveLocation(
                       existing: item,
-                      cropId: cropId!,
+                      cropId: cropId ?? '',
                       lot: lotController.text,
                       network: networkController.text,
                       sector: sectorController.text,
@@ -874,13 +1274,7 @@ class _AdminLocationsPageState extends ConsumerState<AdminLocationsPage> {
                     }
                   } catch (error) {
                     if (context.mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text(
-                            error.toString().replaceFirst('Exception: ', ''),
-                          ),
-                        ),
-                      );
+                      _showError(context, error);
                     }
                   }
                 },
@@ -910,10 +1304,6 @@ class _AdminLocationsPageState extends ConsumerState<AdminLocationsPage> {
 
   @override
   Widget build(BuildContext context) {
-    if (!ref.watch(sessionProvider).isAdmin) {
-      return _adminOnlyScaffold('Ubicaciones');
-    }
-
     return _CatalogScaffold(
       title: 'Ubicaciones / matriz',
       isLoading: _isLoading,
@@ -925,7 +1315,7 @@ class _AdminLocationsPageState extends ConsumerState<AdminLocationsPage> {
               child: ListTile(
                 leading: Icon(item.isActive ? Icons.map_outlined : Icons.block),
                 title: Text(
-                  '${_cropName(item.cropId)} | ${item.lot} | ${item.network} | ${item.sector}',
+                  '${_cropName(item.cropId)} | ${AgroLocalValueFormatters.compactLot(item.lot)} | ${AgroLocalValueFormatters.compactNetwork(item.network)} | ${AgroLocalValueFormatters.compactSector(item.sector)}',
                 ),
                 subtitle: Text(
                   'Ha: ${item.ha.toStringAsFixed(2)} | Comedor sugerido: ${item.suggestedDiningRoom ?? '-'} | ${item.isActive ? 'Activo' : 'Inactivo'}',
@@ -939,6 +1329,16 @@ class _AdminLocationsPageState extends ConsumerState<AdminLocationsPage> {
           )
           .toList(),
     );
+  }
+
+  String? _firstActiveCropId() {
+    for (final crop in _crops) {
+      if (crop.isActive) {
+        return crop.id;
+      }
+    }
+
+    return null;
   }
 
   String _cropName(String id) {
@@ -1034,9 +1434,8 @@ class _EditDeleteActions extends StatelessWidget {
   }
 }
 
-Widget _adminOnlyScaffold(String title) {
-  return Scaffold(
-    appBar: AppBar(title: Text(title)),
-    body: const Center(child: Text('Solo el administrador puede acceder.')),
+void _showError(BuildContext context, Object error) {
+  ScaffoldMessenger.of(context).showSnackBar(
+    SnackBar(content: Text(error.toString().replaceFirst('Exception: ', ''))),
   );
 }

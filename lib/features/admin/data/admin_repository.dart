@@ -32,6 +32,76 @@ class AdminRepository {
         .get();
   }
 
+
+  Future<void> saveRole({
+    required LocalRole? existing,
+    required String name,
+    required bool isAdmin,
+  }) async {
+    final cleanName = name.trim();
+
+    if (cleanName.isEmpty) {
+      throw Exception('Ingrese nombre del cargo/acceso.');
+    }
+
+    final roles = await getRoles();
+    final duplicate = roles.any(
+      (role) =>
+          role.id != existing?.id &&
+          role.name.trim().toLowerCase() == cleanName.toLowerCase(),
+    );
+
+    if (duplicate) {
+      throw Exception('Ya existe un cargo/acceso con ese nombre.');
+    }
+
+    final now = DateTime.now();
+
+    if (existing == null) {
+      await _database
+          .into(_database.roles)
+          .insert(
+            RolesCompanion.insert(
+              id: 'role_${now.microsecondsSinceEpoch}',
+              name: cleanName,
+              isAdmin: Value(isAdmin),
+              createdAt: Value(now),
+              updatedAt: Value(now),
+              syncStatus: const Value(SyncStatuses.pending),
+            ),
+          );
+    } else {
+      await (_database.update(
+        _database.roles,
+      )..where((tbl) => tbl.id.equals(existing.id))).write(
+        RolesCompanion(
+          name: Value(cleanName),
+          isAdmin: Value(isAdmin),
+          updatedAt: Value(now),
+          syncStatus: const Value(SyncStatuses.pending),
+        ),
+      );
+    }
+  }
+
+  Future<void> deleteRole(LocalRole role) async {
+    if (role.id == 'role_admin' || role.id == 'role_user') {
+      throw Exception('No se pueden eliminar los accesos base del sistema.');
+    }
+
+    final now = DateTime.now();
+
+    await (_database.update(
+      _database.roles,
+    )..where((tbl) => tbl.id.equals(role.id))).write(
+      RolesCompanion(
+        deletedAt: Value<DateTime?>(now),
+        updatedAt: Value(now),
+        syncStatus: const Value(SyncStatuses.pending),
+      ),
+    );
+  }
+
   Future<List<LocalUser>> getUsers() {
     return (_database.select(_database.users)
           ..where((tbl) => tbl.deletedAt.isNull())
@@ -579,7 +649,7 @@ class AdminRepository {
     required String? defaultDetail,
     required bool isActive,
   }) async {
-    final cleanCode = code.trim();
+    var cleanCode = code.trim().toUpperCase();
     final cleanName = name.trim();
     final cleanDepartmentId = departmentId.trim();
     final cleanDefaultDetail = defaultDetail?.trim();
@@ -616,6 +686,12 @@ class AdminRepository {
 
     if (crop == null || crop.deletedAt != null || !crop.isActive) {
       throw Exception('El cultivo del departamento no está activo.');
+    }
+
+    final prefix = _taskPrefixForCrop(crop.name);
+
+    if (prefix.isNotEmpty && !cleanCode.startsWith(prefix)) {
+      cleanCode = '$prefix${cleanCode.replaceFirst(RegExp(r'^(ARA-|PAL-)'), '')}';
     }
 
     final tasks = await getTasks();
@@ -707,6 +783,7 @@ class AdminRepository {
     required String lot,
     required String network,
     required String sector,
+    required String? farmType,
     required double ha,
     required String? suggestedDiningRoom,
     required bool isActive,
@@ -731,6 +808,8 @@ class AdminRepository {
       throw Exception('Ha debe ser mayor a cero.');
     }
 
+    final cleanFarmType = farmType?.trim();
+
     final now = DateTime.now();
 
     if (existing == null) {
@@ -743,6 +822,11 @@ class AdminRepository {
               lot: lot.trim(),
               network: network.trim(),
               sector: sector.trim(),
+              farmType: Value<String?>(
+                cleanFarmType == null || cleanFarmType.isEmpty
+                    ? null
+                    : cleanFarmType,
+              ),
               ha: ha,
               suggestedDiningRoom: Value<String?>(suggestedDiningRoom),
               isActive: Value(isActive),
@@ -760,6 +844,11 @@ class AdminRepository {
           lot: Value(lot.trim()),
           network: Value(network.trim()),
           sector: Value(sector.trim()),
+          farmType: Value<String?>(
+            cleanFarmType == null || cleanFarmType.isEmpty
+                ? null
+                : cleanFarmType,
+          ),
           ha: Value(ha),
           suggestedDiningRoom: Value<String?>(suggestedDiningRoom),
           isActive: Value(isActive),
@@ -971,6 +1060,19 @@ class AdminRepository {
 
       return true;
     }).toList();
+  }
+  String _taskPrefixForCrop(String cropName) {
+    final lower = cropName.trim().toLowerCase();
+
+    if (lower.contains('arandano') || lower.contains('arándano')) {
+      return 'ARA-';
+    }
+
+    if (lower.contains('palto')) {
+      return 'PAL-';
+    }
+
+    return '';
   }
 }
 

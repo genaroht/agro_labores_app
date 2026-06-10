@@ -1,6 +1,13 @@
+import 'dart:io';
+import 'dart:typed_data';
+import 'dart:ui' as ui;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../../core/errors/app_error.dart';
 import '../../../data/local/app_database.dart';
@@ -16,6 +23,44 @@ class RecordsListPage extends ConsumerStatefulWidget {
 
 class _RecordsListPageState extends ConsumerState<RecordsListPage> {
   static const String _allDepartmentsFilter = '__all_departments__';
+  static const String _columnPrefsKey =
+      'records_capture_visible_columns_v1';
+  static const List<String> _columnOrder = [
+    'department',
+    'code',
+    'leader',
+    'task',
+    'lotNetwork',
+    'sectors',
+    'scheduledWage',
+    'realWage',
+    'ha',
+    'ratio',
+  ];
+  static const Map<String, String> _columnLabels = {
+    'department': 'Departamento',
+    'code': 'Código',
+    'leader': 'Líder',
+    'task': 'Descripción de Labor',
+    'lotNetwork': 'Lote - Red',
+    'sectors': 'Sectores',
+    'scheduledWage': 'Jornal Prog.',
+    'realWage': 'Jornal Real',
+    'ha': 'Ha',
+    'ratio': 'Ratio',
+  };
+  static const Set<String> _defaultVisibleColumns = {
+    'department',
+    'code',
+    'leader',
+    'task',
+    'lotNetwork',
+    'sectors',
+    'scheduledWage',
+    'ha',
+    'ratio',
+  };
+
 
   bool _isLoading = false;
   bool _showRealWage = false;
@@ -28,11 +73,387 @@ class _RecordsListPageState extends ConsumerState<RecordsListPage> {
   final Map<String, List<FarmRecordLocation>> _locationsByRecord = {};
   final Map<String, String> _operatorCodeByRecord = {};
   final Map<String, String> _departmentNameById = {};
+  final Map<String, bool> _visibleColumns = {
+    for (final key in _columnOrder) key: _defaultVisibleColumns.contains(key),
+  };
 
   @override
   void initState() {
     super.initState();
-    Future.microtask(_loadRecords);
+    Future.microtask(() async {
+      await _loadColumnPreferences();
+      await _loadRecords();
+    });
+  }
+
+  Future<void> _loadColumnPreferences() async {
+    final prefs = await SharedPreferences.getInstance();
+    final visibleKeys = prefs.getStringList(_columnPrefsKey);
+
+    if (visibleKeys == null) {
+      return;
+    }
+
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      for (final key in _columnOrder) {
+        _visibleColumns[key] = visibleKeys.contains(key);
+      }
+
+      // El switch Jornal Real manda sobre la columna realWage.
+      _showRealWage = _visibleColumns['realWage'] ?? false;
+    });
+  }
+
+  Future<void> _saveColumnPreferences() async {
+    final prefs = await SharedPreferences.getInstance();
+    final visibleKeys = _columnOrder
+        .where((key) => _visibleColumns[key] ?? false)
+        .toList();
+
+    await prefs.setStringList(_columnPrefsKey, visibleKeys);
+  }
+
+  Future<void> _openColumnSettings() async {
+    final workingValues = Map<String, bool>.from(_visibleColumns);
+
+    final saved = await showModalBottomSheet<bool>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setSheetState) {
+            return SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    const Text(
+                      'Columnas de la vista captura',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Flexible(
+                      child: ListView(
+                        shrinkWrap: true,
+                        children: _columnOrder.map((key) {
+                          return CheckboxListTile(
+                            value: workingValues[key] ?? false,
+                            title: Text(_columnLabels[key] ?? key),
+                            onChanged: (checked) {
+                              setSheetState(() {
+                                workingValues[key] = checked ?? false;
+                              });
+                            },
+                          );
+                        }).toList(),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton(
+                            onPressed: () {
+                              setSheetState(() {
+                                for (final key in _columnOrder) {
+                                  workingValues[key] =
+                                      _defaultVisibleColumns.contains(key);
+                                }
+                              });
+                            },
+                            child: const Text('Restablecer'),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: FilledButton(
+                            onPressed: () => Navigator.of(context).pop(true),
+                            child: const Text('Guardar'),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+
+    if (saved != true) {
+      return;
+    }
+
+    setState(() {
+      _visibleColumns
+        ..clear()
+        ..addAll(workingValues);
+      _showRealWage = _visibleColumns['realWage'] ?? false;
+    });
+
+    await _saveColumnPreferences();
+  }
+
+  Future<void> _downloadCapture() async {
+    if (_isLoading || _records.isEmpty) {
+      return;
+    }
+
+    try {
+      final bytes = await _buildCaptureImageBytes();
+
+      if (bytes == null || bytes.isEmpty) {
+        _showMessage('No se pudo generar la captura.');
+        return;
+      }
+
+      final directory = await getTemporaryDirectory();
+      final fileName = 'ruta_labores_${_formatFileDate(_selectedDate)}.png';
+      final file = File('${directory.path}/$fileName');
+
+      await file.writeAsBytes(Uint8List.fromList(bytes), flush: true);
+
+      if (!mounted) {
+        return;
+      }
+
+      final box = context.findRenderObject() as RenderBox?;
+      final shareOrigin = box == null
+          ? null
+          : box.localToGlobal(ui.Offset.zero) & box.size;
+
+      await SharePlus.instance.share(
+        ShareParams(
+          files: [XFile(file.path, mimeType: 'image/png')],
+          text: 'Ruta de labores ${_formatDateLong(_selectedDate)}',
+          sharePositionOrigin: shareOrigin,
+        ),
+      );
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+
+      _showMessage(
+        userSafeErrorMessage(
+          error,
+          fallback: 'No se pudo descargar la captura.',
+        ),
+      );
+    }
+  }
+
+  Future<Uint8List?> _buildCaptureImageBytes() async {
+    final columns = _activeColumnKeys;
+    final rows = _records.map((record) {
+      final locations = _locationsByRecord[record.id] ?? [];
+      return [
+        for (final column in columns) _textForColumn(column, record, locations),
+      ];
+    }).toList();
+
+    final columnWidths = [
+      for (final column in columns) _captureColumnWidth(column),
+    ];
+    final tableWidth = columnWidths.fold<double>(0, (sum, width) => sum + width);
+    final logicalWidth = tableWidth < 720 ? 720.0 : tableWidth + 56;
+    final tableLeft = (logicalWidth - tableWidth) / 2;
+
+    const scale = 2.0;
+    const outerPadding = 28.0;
+    const headerHeight = 56.0;
+    const cellHorizontalPadding = 10.0;
+    const cellVerticalPadding = 8.0;
+    const minRowHeight = 54.0;
+
+    const titleStyle = TextStyle(
+      color: Color(0xFF182016),
+      fontSize: 30,
+      fontWeight: FontWeight.w800,
+      height: 1.12,
+    );
+    const dateStyle = TextStyle(
+      color: Color(0xFF182016),
+      fontSize: 20,
+      fontWeight: FontWeight.w700,
+    );
+    const headerStyle = TextStyle(
+      color: Color(0xFF182016),
+      fontSize: 17,
+      fontWeight: FontWeight.w800,
+    );
+    const cellStyle = TextStyle(
+      color: Color(0xFF182016),
+      fontSize: 17,
+      fontWeight: FontWeight.w500,
+      height: 1.18,
+    );
+
+    final titleText = 'RUTA DE LABORES [${_headerDepartmentName(ref.read(sessionProvider)).toUpperCase()}]';
+    final titlePainter = _layoutCaptureText(
+      titleText,
+      titleStyle,
+      logicalWidth - outerPadding * 2,
+      textAlign: TextAlign.center,
+    );
+    final datePainter = _layoutCaptureText(
+      'Fecha: ${_formatShortDate(_selectedDate)}',
+      dateStyle,
+      logicalWidth - outerPadding * 2,
+      textAlign: TextAlign.center,
+    );
+
+    final rowHeights = <double>[];
+    for (final row in rows) {
+      var rowHeight = minRowHeight;
+      for (var index = 0; index < columns.length; index += 1) {
+        final painter = _layoutCaptureText(
+          row[index],
+          cellStyle,
+          columnWidths[index] - cellHorizontalPadding * 2,
+        );
+        final neededHeight = painter.height + cellVerticalPadding * 2;
+        if (neededHeight > rowHeight) {
+          rowHeight = neededHeight;
+        }
+      }
+      rowHeights.add(rowHeight);
+    }
+
+    final tableHeight = headerHeight + rowHeights.fold<double>(0, (sum, h) => sum + h);
+    final logicalHeight = outerPadding +
+        titlePainter.height +
+        14 +
+        datePainter.height +
+        28 +
+        tableHeight +
+        outerPadding;
+
+    final recorder = ui.PictureRecorder();
+    final canvas = ui.Canvas(recorder);
+    canvas.scale(scale);
+
+    final backgroundPaint = ui.Paint()..color = const Color(0xFFF8FCF4);
+    final headerPaint = ui.Paint()..color = const Color(0xFFC4F1BA);
+    final linePaint = ui.Paint()
+      ..color = const Color(0xFFBBC8B5)
+      ..strokeWidth = 1.2;
+    final whitePaint = ui.Paint()..color = const Color(0xFFF8FCF4);
+
+    canvas.drawRect(
+      ui.Rect.fromLTWH(0, 0, logicalWidth, logicalHeight),
+      backgroundPaint,
+    );
+
+    var y = outerPadding;
+    titlePainter.paint(canvas, ui.Offset((logicalWidth - titlePainter.width) / 2, y));
+    y += titlePainter.height + 14;
+    datePainter.paint(canvas, ui.Offset((logicalWidth - datePainter.width) / 2, y));
+    y += datePainter.height + 28;
+
+    var x = tableLeft;
+    for (var index = 0; index < columns.length; index += 1) {
+      final width = columnWidths[index];
+      final rect = ui.Rect.fromLTWH(x, y, width, headerHeight);
+      canvas.drawRect(rect, headerPaint);
+      canvas.drawRect(rect, linePaint..style = ui.PaintingStyle.stroke);
+      _paintCaptureText(
+        canvas,
+        _columnLabels[columns[index]] ?? columns[index],
+        headerStyle,
+        ui.Rect.fromLTWH(
+          x + cellHorizontalPadding,
+          y + cellVerticalPadding,
+          width - cellHorizontalPadding * 2,
+          headerHeight - cellVerticalPadding * 2,
+        ),
+        textAlign: TextAlign.center,
+      );
+      x += width;
+    }
+
+    y += headerHeight;
+    for (var rowIndex = 0; rowIndex < rows.length; rowIndex += 1) {
+      final row = rows[rowIndex];
+      final rowHeight = rowHeights[rowIndex];
+      x = tableLeft;
+      for (var columnIndex = 0; columnIndex < columns.length; columnIndex += 1) {
+        final width = columnWidths[columnIndex];
+        final rect = ui.Rect.fromLTWH(x, y, width, rowHeight);
+        canvas.drawRect(rect, whitePaint);
+        canvas.drawRect(rect, linePaint..style = ui.PaintingStyle.stroke);
+        _paintCaptureText(
+          canvas,
+          row[columnIndex],
+          cellStyle,
+          ui.Rect.fromLTWH(
+            x + cellHorizontalPadding,
+            y + cellVerticalPadding,
+            width - cellHorizontalPadding * 2,
+            rowHeight - cellVerticalPadding * 2,
+          ),
+        );
+        x += width;
+      }
+      y += rowHeight;
+    }
+
+    final picture = recorder.endRecording();
+    final image = await picture.toImage(
+      (logicalWidth * scale).ceil(),
+      (logicalHeight * scale).ceil(),
+    );
+    final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
+    image.dispose();
+    picture.dispose();
+
+    return byteData?.buffer.asUint8List();
+  }
+
+  TextPainter _layoutCaptureText(
+    String text,
+    TextStyle style,
+    double maxWidth, {
+    TextAlign textAlign = TextAlign.left,
+  }) {
+    final painter = TextPainter(
+      text: TextSpan(text: text, style: style),
+      textAlign: textAlign,
+      textDirection: ui.TextDirection.ltr,
+    )..layout(maxWidth: maxWidth);
+
+    return painter;
+  }
+
+  void _paintCaptureText(
+    ui.Canvas canvas,
+    String text,
+    TextStyle style,
+    ui.Rect rect, {
+    TextAlign textAlign = TextAlign.left,
+  }) {
+    final painter = _layoutCaptureText(
+      text,
+      style,
+      rect.width,
+      textAlign: textAlign,
+    );
+    final offset = ui.Offset(
+      rect.left,
+      rect.top + ((rect.height - painter.height) / 2).clamp(0.0, rect.height).toDouble(),
+    );
+    painter.paint(canvas, offset);
   }
 
   Future<void> _loadRecords() async {
@@ -207,6 +628,12 @@ class _RecordsListPageState extends ConsumerState<RecordsListPage> {
     await _loadRecords();
   }
 
+  void _showMessage(String message) {
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
+  }
+
   @override
   Widget build(BuildContext context) {
     final session = ref.watch(sessionProvider);
@@ -234,14 +661,6 @@ class _RecordsListPageState extends ConsumerState<RecordsListPage> {
           ),
         ],
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () async {
-          await context.push('/records/new');
-          await _loadRecords();
-        },
-        icon: const Icon(Icons.add),
-        label: const Text('Nuevo'),
-      ),
       body: RefreshIndicator(
         onRefresh: _loadRecords,
         child: ListView(
@@ -268,16 +687,9 @@ class _RecordsListPageState extends ConsumerState<RecordsListPage> {
                       child: Text(_message!, textAlign: TextAlign.center),
                     ),
                   if (_records.isNotEmpty) _buildProgramTable(),
-                  if (_records.isNotEmpty) _buildTotals(),
                 ],
               ),
             ),
-            const SizedBox(height: 12),
-            if (_records.isNotEmpty)
-              const Text(
-                'Para captura manual, gire el celular a horizontal y tome captura de la tarjeta del programa. Toque una fila para abrir el registro.',
-                textAlign: TextAlign.center,
-              ),
             const SizedBox(height: 80),
           ],
         ),
@@ -332,10 +744,12 @@ class _RecordsListPageState extends ConsumerState<RecordsListPage> {
             ] else
               InputDecorator(
                 decoration: const InputDecoration(
-                  labelText: 'Departamento activo',
+                  labelText: 'Rol activo',
                   border: OutlineInputBorder(),
                 ),
-                child: Text(session.activeDepartment?.name ?? '-'),
+                child: Text(
+                  'Supervisor de ${session.activeDepartment?.name ?? '-'}',
+                ),
               ),
             if (!session.isAdmin) const SizedBox(height: 12),
             Row(
@@ -360,16 +774,35 @@ class _RecordsListPageState extends ConsumerState<RecordsListPage> {
             const SizedBox(height: 8),
             SwitchListTile(
               contentPadding: EdgeInsets.zero,
-              title: const Text('Mostrar Jornal real'),
+              title: const Text('Mostrar Jornal Real'),
               subtitle: const Text(
                 'Útil para comparar programación vs ejecución.',
               ),
               value: _showRealWage,
-              onChanged: (value) {
+              onChanged: (value) async {
                 setState(() {
                   _showRealWage = value;
+                  _visibleColumns['realWage'] = value;
                 });
+                await _saveColumnPreferences();
               },
+            ),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 12,
+              runSpacing: 8,
+              children: [
+                OutlinedButton.icon(
+                  onPressed: _openColumnSettings,
+                  icon: const Icon(Icons.view_column_outlined),
+                  label: const Text('Columnas'),
+                ),
+                FilledButton.icon(
+                  onPressed: _records.isEmpty ? null : _downloadCapture,
+                  icon: const Icon(Icons.download_outlined),
+                  label: const Text('Descargar captura'),
+                ),
+              ],
             ),
           ],
         ),
@@ -379,6 +812,7 @@ class _RecordsListPageState extends ConsumerState<RecordsListPage> {
 
   Widget _buildProgramTable() {
     final colorScheme = Theme.of(context).colorScheme;
+    final visibleColumns = _activeColumnKeys;
 
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
@@ -386,109 +820,140 @@ class _RecordsListPageState extends ConsumerState<RecordsListPage> {
         showCheckboxColumn: false,
         headingRowColor: WidgetStateProperty.all(colorScheme.primaryContainer),
         border: TableBorder.all(color: colorScheme.outlineVariant),
-        columnSpacing: 18,
-        horizontalMargin: 12,
-        columns: [
-          const DataColumn(label: _HeaderCell('Departamento')),
-          const DataColumn(label: _HeaderCell('Líder')),
-          const DataColumn(label: _HeaderCell('Código')),
-          const DataColumn(label: _HeaderCell('Descripción de Labor')),
-          const DataColumn(label: _HeaderCell('Lote - Red')),
-          const DataColumn(label: _HeaderCell('Sectores')),
-          const DataColumn(label: _HeaderCell('Jornal')),
-          if (_showRealWage)
-            const DataColumn(label: _HeaderCell('Jornal real')),
-          const DataColumn(label: _HeaderCell('Ha')),
-          const DataColumn(label: _HeaderCell('Ratio')),
-        ],
+        columnSpacing: 16,
+        horizontalMargin: 10,
+        columns: visibleColumns
+            .map(
+              (key) => DataColumn(
+                label: _HeaderCell(_columnLabels[key] ?? key),
+              ),
+            )
+            .toList(),
         rows: _records.map((record) {
           final locations = _locationsByRecord[record.id] ?? [];
 
           return DataRow(
             onSelectChanged: (_) => _openRecord(record),
-            cells: [
-              DataCell(Text(_departmentNameById[record.departmentId] ?? '-')),
-              DataCell(
-                ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 180),
-                  child: Text(
-                    record.leaderNameSnapshot ??
-                        record.operatorNameSnapshot ??
-                        '-',
-                  ),
-                ),
-              ),
-              DataCell(Text(_operatorCodeByRecord[record.id] ?? '-')),
-              DataCell(
-                ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 220),
-                  child: Text(record.taskNameSnapshot ?? '-'),
-                ),
-              ),
-              DataCell(Text(_lotNetworkText(record, locations))),
-              DataCell(
-                ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 160),
-                  child: Text(_sectorText(locations)),
-                ),
-              ),
-              DataCell(Text(_formatNumber(record.scheduledWage))),
-              if (_showRealWage) DataCell(Text(_formatNumber(record.realWage))),
-              DataCell(Text(record.ha.toStringAsFixed(2))),
-              DataCell(Text(record.ratio?.toStringAsFixed(2) ?? '-')),
-            ],
+            cells: visibleColumns.map((key) {
+              return DataCell(_cellForColumn(key, record, locations));
+            }).toList(),
           );
         }).toList(),
       ),
     );
   }
 
-  Widget _buildTotals() {
-    final totalRatio = _totalHa > 0 ? _totalScheduledWage / _totalHa : null;
+  List<String> get _activeColumnKeys {
+    final visible = _columnOrder
+        .where((key) => _visibleColumns[key] ?? false)
+        .where((key) => key != 'realWage' || _showRealWage)
+        .toList();
 
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surfaceContainerHighest,
-        border: Border(
-          left: BorderSide(color: Theme.of(context).colorScheme.outlineVariant),
-          right: BorderSide(
-            color: Theme.of(context).colorScheme.outlineVariant,
+    if (visible.isEmpty) {
+      return ['code', 'leader', 'task'];
+    }
+
+    return visible;
+  }
+
+  Widget _cellForColumn(
+    String key,
+    FarmRecord record,
+    List<FarmRecordLocation> locations,
+  ) {
+    switch (key) {
+      case 'department':
+        return Text(_departmentNameById[record.departmentId] ?? '-');
+      case 'code':
+        return Text(_operatorCodeByRecord[record.id] ?? '-');
+      case 'leader':
+        return ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 170),
+          child: Text(
+            record.leaderNameSnapshot ?? record.operatorNameSnapshot ?? '-',
           ),
-          bottom: BorderSide(
-            color: Theme.of(context).colorScheme.outlineVariant,
-          ),
-        ),
-      ),
-      child: Wrap(
-        alignment: WrapAlignment.end,
-        spacing: 18,
-        runSpacing: 8,
-        children: [
-          Text(
-            'Registros: ${_records.length}',
-            style: const TextStyle(fontWeight: FontWeight.bold),
-          ),
-          Text(
-            'Total Jornal: ${_formatNumber(_totalScheduledWage)}',
-            style: const TextStyle(fontWeight: FontWeight.bold),
-          ),
-          if (_showRealWage)
-            Text(
-              'Total Jornal real: ${_formatNumber(_totalRealWage)}',
-              style: const TextStyle(fontWeight: FontWeight.bold),
-            ),
-          Text(
-            'Total Ha: ${_totalHa.toStringAsFixed(2)}',
-            style: const TextStyle(fontWeight: FontWeight.bold),
-          ),
-          Text(
-            'Ratio total: ${totalRatio?.toStringAsFixed(2) ?? '-'}',
-            style: const TextStyle(fontWeight: FontWeight.bold),
-          ),
-        ],
-      ),
-    );
+        );
+      case 'task':
+        return ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 210),
+          child: Text(record.taskNameSnapshot ?? '-'),
+        );
+      case 'lotNetwork':
+        return Text(_lotNetworkText(record, locations));
+      case 'sectors':
+        return ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 150),
+          child: Text(_sectorText(locations)),
+        );
+      case 'scheduledWage':
+        return Text(_formatNumber(record.scheduledWage));
+      case 'realWage':
+        return Text(_formatNumber(record.realWage));
+      case 'ha':
+        return Text(record.ha.toStringAsFixed(2));
+      case 'ratio':
+        return Text(record.ratio?.toStringAsFixed(2) ?? '-');
+      default:
+        return const Text('-');
+    }
+  }
+
+  String _textForColumn(
+    String key,
+    FarmRecord record,
+    List<FarmRecordLocation> locations,
+  ) {
+    switch (key) {
+      case 'department':
+        return _departmentNameById[record.departmentId] ?? '-';
+      case 'code':
+        return _operatorCodeByRecord[record.id] ?? '-';
+      case 'leader':
+        return record.leaderNameSnapshot ?? record.operatorNameSnapshot ?? '-';
+      case 'task':
+        return record.taskNameSnapshot ?? '-';
+      case 'lotNetwork':
+        return _lotNetworkText(record, locations);
+      case 'sectors':
+        return _sectorText(locations);
+      case 'scheduledWage':
+        return _formatNumber(record.scheduledWage);
+      case 'realWage':
+        return _formatNumber(record.realWage);
+      case 'ha':
+        return record.ha.toStringAsFixed(2);
+      case 'ratio':
+        return record.ratio?.toStringAsFixed(2) ?? '-';
+      default:
+        return '-';
+    }
+  }
+
+  double _captureColumnWidth(String key) {
+    switch (key) {
+      case 'department':
+        return 220;
+      case 'code':
+        return 96;
+      case 'leader':
+        return 230;
+      case 'task':
+        return 270;
+      case 'lotNetwork':
+        return 150;
+      case 'sectors':
+        return 170;
+      case 'scheduledWage':
+        return 130;
+      case 'realWage':
+        return 130;
+      case 'ha':
+        return 92;
+      case 'ratio':
+        return 96;
+      default:
+        return 150;
+    }
   }
 
   String _headerDepartmentName(AppSession session) {
@@ -611,24 +1076,6 @@ class _RecordsListPageState extends ConsumerState<RecordsListPage> {
         first.day == second.day;
   }
 
-  double get _totalScheduledWage {
-    return _records.fold<double>(
-      0,
-      (total, record) => total + (record.scheduledWage ?? 0),
-    );
-  }
-
-  double get _totalRealWage {
-    return _records.fold<double>(
-      0,
-      (total, record) => total + (record.realWage ?? 0),
-    );
-  }
-
-  double get _totalHa {
-    return _records.fold<double>(0, (total, record) => total + record.ha);
-  }
-
   String _formatNumber(double? value) {
     if (value == null) {
       return '-';
@@ -641,10 +1088,26 @@ class _RecordsListPageState extends ConsumerState<RecordsListPage> {
     return value.toStringAsFixed(2);
   }
 
+  String _formatFileDate(DateTime date) {
+    final day = date.day.toString().padLeft(2, '0');
+    final month = date.month.toString().padLeft(2, '0');
+    final year = date.year.toString();
+
+    return '${year}_${month}_$day';
+  }
+
   String _formatDateLong(DateTime date) {
     final day = date.day.toString().padLeft(2, '0');
     final month = date.month.toString().padLeft(2, '0');
     final year = date.year.toString();
+
+    return '$day/$month/$year';
+  }
+
+  String _formatShortDate(DateTime date) {
+    final day = date.day.toString().padLeft(2, '0');
+    final month = date.month.toString().padLeft(2, '0');
+    final year = date.year.toString().substring(2);
 
     return '$day/$month/$year';
   }
@@ -674,7 +1137,7 @@ class _ProgramCaptureCard extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               Text(
-                'PROGRAMA DE LABORES [${departmentName.toUpperCase()}]',
+                'RUTA DE LABORES [${departmentName.toUpperCase()}]',
                 textAlign: TextAlign.center,
                 style: const TextStyle(
                   fontSize: 20,

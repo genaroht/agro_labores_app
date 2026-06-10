@@ -253,6 +253,7 @@ class _AdminUsersPageState extends ConsumerState<AdminUsersPage> {
                       ),
                       const SizedBox(height: 12),
                       DropdownButtonFormField<String>(
+      isExpanded: true,
                         initialValue: selectedRoleId,
                         decoration: const InputDecoration(
                           labelText: 'Cargo / acceso',
@@ -380,11 +381,6 @@ class _AdminUsersPageState extends ConsumerState<AdminUsersPage> {
     if (saved == true) {
       await _load();
     }
-
-    codeController.dispose();
-    nameController.dispose();
-    pinController.dispose();
-    operatorSearchController.dispose();
   }
 
   Future<void> _delete(LocalUser user) async {
@@ -552,8 +548,226 @@ class _AdminUsersPageState extends ConsumerState<AdminUsersPage> {
   String _cropIdLabel(String? cropId) => cropId ?? '-';
 }
 
+
 void _showError(BuildContext context, Object error) {
   ScaffoldMessenger.of(context).showSnackBar(
     SnackBar(content: Text(error.toString().replaceFirst('Exception: ', ''))),
   );
+}
+
+class AdminRolesPage extends ConsumerStatefulWidget {
+  const AdminRolesPage({super.key});
+
+  @override
+  ConsumerState<AdminRolesPage> createState() => _AdminRolesPageState();
+}
+
+class _AdminRolesPageState extends ConsumerState<AdminRolesPage> {
+  bool _isLoading = false;
+  List<LocalRole> _roles = [];
+
+  @override
+  void initState() {
+    super.initState();
+    Future.microtask(_load);
+  }
+
+  Future<void> _load() async {
+    final session = ref.read(sessionProvider);
+
+    if (!session.isAdmin) {
+      return;
+    }
+
+    setState(() => _isLoading = true);
+
+    try {
+      final repository = ref.read(adminRepositoryProvider);
+      final roles = await repository.getRoles();
+
+      if (!mounted) {
+        return;
+      }
+
+      setState(() => _roles = roles);
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+    }
+  }
+
+  Future<void> _openForm([LocalRole? role]) async {
+    final repository = ref.read(adminRepositoryProvider);
+    final nameController = TextEditingController(text: role?.name ?? '');
+    var isAdminAccess = role?.isAdmin ?? false;
+
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              title: Text(
+                role == null ? 'Nuevo cargo/acceso' : 'Editar cargo/acceso',
+              ),
+              content: SizedBox(
+                width: 460,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    TextField(
+                      controller: nameController,
+                      textCapitalization: TextCapitalization.words,
+                      decoration: const InputDecoration(
+                        labelText: 'Nombre del cargo/acceso',
+                        helperText: 'Ejemplo: Supervisor cosecha arándano',
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('Acceso administrador'),
+                      subtitle: const Text(
+                        'El administrador tiene acceso total. Los demás accesos funcionan como supervisor por departamento.',
+                      ),
+                      value: isAdminAccess,
+                      onChanged: (value) {
+                        setDialogState(() => isAdminAccess = value);
+                      },
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Nota: la matriz granular de funciones se debe sincronizar con el servidor para que no se pierda en otros equipos.',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(false),
+                  child: const Text('Cancelar'),
+                ),
+                FilledButton(
+                  onPressed: () async {
+                    try {
+                      await repository.saveRole(
+                        existing: role,
+                        name: nameController.text,
+                        isAdmin: isAdminAccess,
+                      );
+
+                      if (context.mounted) {
+                        Navigator.of(context).pop(true);
+                      }
+                    } catch (error) {
+                      if (context.mounted) {
+                        _showError(context, error);
+                      }
+                    }
+                  },
+                  child: const Text('Guardar'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    if (saved == true) {
+      await _load();
+    }
+  }
+
+  Future<void> _delete(LocalRole role) async {
+    try {
+      await ref.read(adminRepositoryProvider).deleteRole(role);
+      await _load();
+    } catch (error) {
+      if (mounted) {
+        _showError(context, error);
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final session = ref.watch(sessionProvider);
+
+    if (!session.isAdmin) {
+      return Scaffold(
+        appBar: AppBar(title: const Text('Cargos / accesos')),
+        body: const Center(child: Text('Acceso solo para admin.')),
+      );
+    }
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Cargos / accesos'),
+        actions: [
+          IconButton(onPressed: _load, icon: const Icon(Icons.refresh)),
+        ],
+      ),
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: () => _openForm(),
+        icon: const Icon(Icons.add),
+        label: const Text('Nuevo'),
+      ),
+      body: _isLoading
+          ? const Center(child: CircularProgressIndicator())
+          : ListView(
+              padding: const EdgeInsets.all(24),
+              children: _roles.isEmpty
+                  ? const [
+                      Card(
+                        child: Padding(
+                          padding: EdgeInsets.all(16),
+                          child: Text('No hay cargos/accesos.'),
+                        ),
+                      ),
+                    ]
+                  : _roles.map((role) {
+                      final isBaseRole =
+                          role.id == 'role_admin' || role.id == 'role_user';
+
+                      return Card(
+                        child: ListTile(
+                          leading: Icon(
+                            role.isAdmin
+                                ? Icons.admin_panel_settings_outlined
+                                : Icons.supervisor_account_outlined,
+                          ),
+                          title: Text(role.name),
+                          subtitle: Text(
+                            role.isAdmin
+                                ? 'Administrador · acceso completo'
+                                : 'Supervisor · acceso según departamentos asignados',
+                          ),
+                          trailing: Wrap(
+                            children: [
+                              IconButton(
+                                tooltip: 'Editar',
+                                onPressed: () => _openForm(role),
+                                icon: const Icon(Icons.edit),
+                              ),
+                              IconButton(
+                                tooltip: isBaseRole
+                                    ? 'Acceso base del sistema'
+                                    : 'Eliminar',
+                                onPressed: isBaseRole
+                                    ? null
+                                    : () => _delete(role),
+                                icon: const Icon(Icons.delete_outline),
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    }).toList(),
+            ),
+    );
+  }
 }

@@ -4,7 +4,6 @@ import 'package:go_router/go_router.dart';
 
 import '../../../shared/providers/session_provider.dart';
 import '../../../shared/widgets/action_card.dart';
-import '../../../shared/widgets/metric_card.dart';
 import '../../../shared/widgets/responsive_page.dart';
 
 class HomePage extends ConsumerWidget {
@@ -31,6 +30,11 @@ class HomePage extends ConsumerWidget {
               icon: const Icon(Icons.swap_horiz),
             ),
           IconButton(
+            tooltip: 'Sincronizar',
+            onPressed: () => context.push('/sync'),
+            icon: const Icon(Icons.sync),
+          ),
+          IconButton(
             tooltip: 'Cerrar sesión',
             onPressed: () async {
               await ref.read(sessionProvider.notifier).logout();
@@ -45,37 +49,15 @@ class HomePage extends ConsumerWidget {
             icon: Icons.eco_outlined,
             title: 'Hola, ${session.userName ?? 'usuario'}',
             subtitle: session.isAdmin
-                ? 'Acceso administrativo a todos los departamentos.'
-                : 'Departamento activo: ${session.activeDepartment?.name ?? '-'}',
-          ),
-          const SizedBox(height: 24),
-          ResponsiveSection(
-            maxColumns: 3,
-            children: [
-              MetricCard(
-                icon: Icons.badge_outlined,
-                label: 'Código',
-                value: session.userCode ?? '-',
-              ),
-              MetricCard(
-                icon: Icons.work_outline,
-                label: 'Cargo',
-                value: session.roleName ?? '-',
-              ),
-              MetricCard(
-                icon: Icons.account_tree_outlined,
-                label: 'Acceso',
-                value: session.isAdmin ? 'Administrador' : 'Supervisor',
-                emphasize: session.isAdmin,
-              ),
-            ],
+                ? 'Administrador · acceso completo'
+                : '${_roleTitle(session)} de ${session.activeDepartment?.name ?? '-'}',
           ),
           const SizedBox(height: 24),
           PageHeader(
             title: 'Acciones principales',
             subtitle: session.isAdmin
-                ? 'Entra al panel para administrar catálogos, reportes, captura y bloqueos.'
-                : 'Atajos para registrar, revisar captura, mantener personas y sincronizar.',
+                ? 'Gestiona usuarios, catálogos, registros y reportes.'
+                : 'Registra y revisa la ruta de labores del departamento activo.',
           ),
           const SizedBox(height: 16),
           ResponsiveSection(
@@ -110,16 +92,26 @@ class HomePage extends ConsumerWidget {
                   onTap: () => context.push('/supervisor'),
                 ),
               ],
-              AppActionCard(
-                icon: Icons.sync,
-                title: 'Sincronización',
-                subtitle: 'Subir pendientes y descargar cambios',
-                onTap: () => context.push('/sync'),
-              ),
+
             ],
           ),
         ],
       ),
     );
+  }
+  String _roleTitle(AppSession session) {
+    final role = session.roleName?.trim();
+
+    if (role == null || role.isEmpty) {
+      return 'Supervisor';
+    }
+
+    final lower = role.toLowerCase();
+
+    if (lower == 'supervisor') {
+      return 'Supervisor';
+    }
+
+    return role[0].toUpperCase() + role.substring(1);
   }
 }

@@ -37,14 +37,30 @@ class SupervisorPanelPage extends ConsumerWidget {
     }
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Panel Supervisor')),
+      appBar: AppBar(
+        title: const Text('Panel Supervisor'),
+        actions: [
+          IconButton(
+            tooltip: 'Sincronizar',
+            onPressed: () => context.push('/sync'),
+            icon: const Icon(Icons.sync),
+          ),
+          IconButton(
+            tooltip: 'Cerrar sesión',
+            onPressed: () async {
+              await ref.read(sessionProvider.notifier).logout();
+            },
+            icon: const Icon(Icons.logout),
+          ),
+        ],
+      ),
       body: ResponsivePage(
         children: [
           PageHeader(
             icon: Icons.supervisor_account_outlined,
             title: 'Panel Supervisor',
             subtitle:
-                'Mantén personas y catálogos operativos para tus labores agrícolas.',
+                'Administra solo lo operativo del departamento: operarios, labores, comedores y ubicaciones.',
           ),
           const SizedBox(height: 24),
           ResponsiveSection(
@@ -55,18 +71,6 @@ class SupervisorPanelPage extends ConsumerWidget {
                 title: 'Operarios / personas',
                 subtitle: 'Crear y editar personas del departamento',
                 onTap: () => context.push('/supervisor/operators'),
-              ),
-              AppActionCard(
-                icon: Icons.business_outlined,
-                title: 'Departamentos',
-                subtitle: 'Crear o actualizar departamentos',
-                onTap: () => context.push('/supervisor/departments'),
-              ),
-              AppActionCard(
-                icon: Icons.grass_outlined,
-                title: 'Cultivos',
-                subtitle: 'Crear o actualizar cultivos',
-                onTap: () => context.push('/supervisor/crops'),
               ),
               AppActionCard(
                 icon: Icons.work_outline,

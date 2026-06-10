@@ -1010,8 +1010,9 @@ class SyncService {
         localSyncStatus: local?.syncStatus,
         localUpdatedAt: local?.updatedAt,
         remoteUpdatedAt: _dateTimeOrNull(item, 'updatedAt'),
-      ))
+      )) {
         continue;
+      }
 
       await _database
           .into(_database.roles)
@@ -1045,8 +1046,9 @@ class SyncService {
         localSyncStatus: local?.syncStatus,
         localUpdatedAt: local?.updatedAt,
         remoteUpdatedAt: _dateTimeOrNull(item, 'updatedAt'),
-      ))
+      )) {
         continue;
+      }
 
       await _database
           .into(_database.crops)
@@ -1081,8 +1083,9 @@ class SyncService {
         localSyncStatus: local?.syncStatus,
         localUpdatedAt: local?.updatedAt,
         remoteUpdatedAt: _dateTimeOrNull(item, 'updatedAt'),
-      ))
+      )) {
         continue;
+      }
 
       await _database
           .into(_database.positions)
@@ -1127,8 +1130,9 @@ class SyncService {
         localSyncStatus: local?.syncStatus,
         localUpdatedAt: local?.updatedAt,
         remoteUpdatedAt: _dateTimeOrNull(item, 'updatedAt'),
-      ))
+      )) {
         continue;
+      }
 
       await _database
           .into(_database.departments)
@@ -1164,8 +1168,9 @@ class SyncService {
         localSyncStatus: local?.syncStatus,
         localUpdatedAt: local?.updatedAt,
         remoteUpdatedAt: _dateTimeOrNull(item, 'updatedAt'),
-      ))
+      )) {
         continue;
+      }
 
       await _database
           .into(_database.operators)
@@ -1203,8 +1208,9 @@ class SyncService {
         localSyncStatus: local?.syncStatus,
         localUpdatedAt: local?.updatedAt,
         remoteUpdatedAt: _dateTimeOrNull(item, 'updatedAt'),
-      ))
+      )) {
         continue;
+      }
 
       await _database
           .into(_database.users)
@@ -1246,8 +1252,9 @@ class SyncService {
         localSyncStatus: local?.syncStatus,
         localUpdatedAt: local?.updatedAt,
         remoteUpdatedAt: _dateTimeOrNull(item, 'updatedAt'),
-      ))
+      )) {
         continue;
+      }
 
       final userId = _string(item, 'userId') ?? local?.userId;
       final departmentId = _string(item, 'departmentId') ?? local?.departmentId;
@@ -1283,8 +1290,9 @@ class SyncService {
         localSyncStatus: local?.syncStatus,
         localUpdatedAt: local?.updatedAt,
         remoteUpdatedAt: _dateTimeOrNull(item, 'updatedAt'),
-      ))
+      )) {
         continue;
+      }
 
       await _database
           .into(_database.tasks)
@@ -1323,8 +1331,9 @@ class SyncService {
         localSyncStatus: local?.syncStatus,
         localUpdatedAt: local?.updatedAt,
         remoteUpdatedAt: _dateTimeOrNull(item, 'updatedAt'),
-      ))
+      )) {
         continue;
+      }
 
       final cropId = _string(item, 'cropId') ?? local?.cropId;
       if (cropId == null) continue;
@@ -1369,8 +1378,9 @@ class SyncService {
         localSyncStatus: local?.syncStatus,
         localUpdatedAt: local?.updatedAt,
         remoteUpdatedAt: _dateTimeOrNull(item, 'updatedAt'),
-      ))
+      )) {
         continue;
+      }
 
       final cropId = _string(item, 'cropId') ?? local?.cropId;
       if (cropId == null) continue;
@@ -1411,15 +1421,17 @@ class SyncService {
         localSyncStatus: local?.syncStatus,
         localUpdatedAt: local?.updatedAt,
         remoteUpdatedAt: _dateTimeOrNull(item, 'updatedAt'),
-      ))
+      )) {
         continue;
+      }
 
       final departmentId = _string(item, 'departmentId') ?? local?.departmentId;
       final createdByUserId =
           _string(item, 'createdByUserId') ?? local?.createdByUserId;
       final userCode = _string(item, 'userCode') ?? local?.userCode;
-      if (departmentId == null || createdByUserId == null || userCode == null)
+      if (departmentId == null || createdByUserId == null || userCode == null) {
         continue;
+      }
 
       await _database
           .into(_database.records)
@@ -1516,8 +1528,9 @@ class SyncService {
         localSyncStatus: local?.syncStatus,
         localUpdatedAt: local?.updatedAt,
         remoteUpdatedAt: _dateTimeOrNull(item, 'updatedAt'),
-      ))
+      )) {
         continue;
+      }
 
       final recordId = _string(item, 'recordId') ?? local?.recordId;
       final locationId = _string(item, 'locationId') ?? local?.locationId;
@@ -1572,8 +1585,9 @@ class SyncService {
         localSyncStatus: local?.syncStatus,
         localUpdatedAt: local?.updatedAt,
         remoteUpdatedAt: _dateTimeOrNull(item, 'updatedAt'),
-      ))
+      )) {
         continue;
+      }
 
       final departmentId = _string(item, 'departmentId') ?? local?.departmentId;
       if (departmentId == null) continue;
@@ -1621,8 +1635,9 @@ class SyncService {
         localSyncStatus: local?.syncStatus,
         localUpdatedAt: local?.updatedAt,
         remoteUpdatedAt: _dateTimeOrNull(item, 'updatedAt'),
-      ))
+      )) {
         continue;
+      }
 
       await _database
           .into(_database.tableColumnConfigs)
@@ -1901,10 +1916,12 @@ class SyncService {
       if (normalized == 'true' ||
           normalized == '1' ||
           normalized == 'sí' ||
-          normalized == 'si')
+          normalized == 'si') {
         return true;
-      if (normalized == 'false' || normalized == '0' || normalized == 'no')
+      }
+      if (normalized == 'false' || normalized == '0' || normalized == 'no') {
         return false;
+      }
     }
 
     return fallback;
@@ -1929,8 +1946,9 @@ class SyncService {
 
     if (value is double) return value;
     if (value is num) return value.toDouble();
-    if (value is String)
+    if (value is String) {
       return double.tryParse(value.replaceAll(',', '.')) ?? fallback;
+    }
 
     return fallback;
   }

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/config/app_environment.dart';
@@ -212,13 +213,6 @@ class _BrandPanel extends StatelessWidget {
                 fontWeight: FontWeight.w800,
               ),
             ),
-            const SizedBox(height: 10),
-            Text(
-              'Inicia sesión para continuar con tus labores asignadas.',
-              style: theme.textTheme.titleMedium?.copyWith(
-                color: colorScheme.onPrimaryContainer,
-              ),
-            ),
           ],
         ),
       ),
@@ -293,9 +287,13 @@ class _LoginCard extends StatelessWidget {
                         labelText: 'Código de usuario',
                         prefixIcon: Icon(Icons.badge_outlined),
                       ),
-                      keyboardType: TextInputType.text,
+                      keyboardType: TextInputType.number,
                       textInputAction: TextInputAction.next,
-                      validator: _requiredValidator(
+                      inputFormatters: [
+                        FilteringTextInputFormatter.digitsOnly,
+                        LengthLimitingTextInputFormatter(6),
+                      ],
+                      validator: _sixDigitValidator(
                         'Ingrese su código de usuario.',
                       ),
                     ),
@@ -318,10 +316,14 @@ class _LoginCard extends StatelessWidget {
                         ),
                       ),
                       obscureText: obscurePassword,
-                      keyboardType: TextInputType.visiblePassword,
+                      keyboardType: TextInputType.number,
+                      inputFormatters: [
+                        FilteringTextInputFormatter.digitsOnly,
+                        LengthLimitingTextInputFormatter(6),
+                      ],
                       textInputAction: TextInputAction.done,
                       onFieldSubmitted: (_) => onSubmit(),
-                      validator: _requiredValidator('Ingrese su contraseña.'),
+                      validator: _sixDigitValidator('Ingrese su contraseña.'),
                     ),
                     const SizedBox(height: 24),
                     FilledButton.icon(
@@ -342,12 +344,16 @@ class _LoginCard extends StatelessWidget {
     );
   }
 
-  FormFieldValidator<String> _requiredValidator(String emptyMessage) {
+  FormFieldValidator<String> _sixDigitValidator(String emptyMessage) {
     return (value) {
       final cleanValue = value?.trim() ?? '';
 
       if (cleanValue.isEmpty) {
         return emptyMessage;
+      }
+
+      if (!RegExp(r'^\d{6}$').hasMatch(cleanValue)) {
+        return 'Debe tener exactamente 6 dígitos.';
       }
 
       return null;

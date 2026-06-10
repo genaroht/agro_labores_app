@@ -1,4 +1,3 @@
-import 'package:flutter/foundation.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -203,6 +202,11 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         path: '/admin/users',
         name: 'adminUsers',
         builder: (context, state) => const AdminUsersPage(),
+      ),
+      GoRoute(
+        path: '/admin/roles',
+        name: 'adminRoles',
+        builder: (context, state) => const AdminRolesPage(),
       ),
       GoRoute(
         path: '/admin/operators',

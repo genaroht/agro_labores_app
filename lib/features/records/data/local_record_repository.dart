@@ -463,8 +463,14 @@ class LocalRecordRepository {
     return _database.getActiveTasksByDepartment(departmentId);
   }
 
-  Future<List<LocationEntry>> getLocationsForCrop(String cropId) {
-    return _database.getLocationsByCrop(cropId);
+  Future<List<LocationEntry>> getLocationsForCrop(
+    String cropId, {
+    String? farmType,
+  }) {
+    return _database.getLocationsByCropAndFarmType(
+      cropId: cropId,
+      farmType: farmType,
+    );
   }
 
   Future<FarmOperator?> getOperatorById(String operatorId) {

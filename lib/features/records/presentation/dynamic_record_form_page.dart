@@ -273,7 +273,10 @@ class _DynamicRecordFormPageState extends ConsumerState<DynamicRecordFormPage> {
     }
 
     if (selectedCropId != null) {
-      locationsForCrop = await repository.getLocationsForCrop(selectedCropId);
+      locationsForCrop = await repository.getLocationsForCrop(
+        selectedCropId,
+        farmType: _farmTypeForDepartment(department),
+      );
 
       if (selectedLot != null && selectedNetwork != null) {
         diningRooms = await repository.getDiningRoomsForCropLotNetwork(
@@ -373,7 +376,10 @@ class _DynamicRecordFormPageState extends ConsumerState<DynamicRecordFormPage> {
 
     try {
       final repository = ref.read(localRecordRepositoryProvider);
-      final locations = await repository.getLocationsForCrop(cropId);
+      final locations = await repository.getLocationsForCrop(
+        cropId,
+        farmType: _farmTypeForDepartment(_selectedDepartment),
+      );
 
       if (!mounted) {
         return;
@@ -728,7 +734,7 @@ class _DynamicRecordFormPageState extends ConsumerState<DynamicRecordFormPage> {
     return Scaffold(
       appBar: AppBar(
         title: Text(
-          _isEditing ? 'Editar registro' : 'Nuevo registro programado',
+          _isEditing ? 'Editar registro' : 'Nuevo registro',
         ),
       ),
       body: _isLoading
@@ -736,25 +742,23 @@ class _DynamicRecordFormPageState extends ConsumerState<DynamicRecordFormPage> {
           : _message != null
           ? Center(
               child: Padding(
-                padding: const EdgeInsets.all(24),
+                padding: const EdgeInsets.all(14),
                 child: Text(_message!),
               ),
             )
           : Form(
               key: _formKey,
               child: ListView(
-                padding: const EdgeInsets.all(24),
+                padding: const EdgeInsets.all(14),
                 children: [
-                  _buildHeaderCard(session),
                   if (session.isAdmin) ...[
-                    const SizedBox(height: 16),
                     _buildAdminDepartmentField(),
                   ],
                   if (isBlocked) ...[
-                    const SizedBox(height: 16),
+                    const SizedBox(height: 10),
                     _buildBlockMessageCard(blockMessage),
                   ],
-                  const SizedBox(height: 16),
+                  const SizedBox(height: 10),
                   if (supervisorRealWageMode) ...[
                     _buildLockedProgrammingSummary(),
                     _buildRealWageField(),
@@ -763,12 +767,11 @@ class _DynamicRecordFormPageState extends ConsumerState<DynamicRecordFormPage> {
                     _buildLeaderField(),
                     _buildTaskField(),
                     _buildLocationSection(),
-                    _buildDiningRoomField(),
-                    _buildScheduledWageField(),
+                    _buildProductivitySection(),
                     if (_isEditing) _buildRealWageField(),
                   ],
                   _buildObservationField(),
-                  const SizedBox(height: 24),
+                  const SizedBox(height: 16),
                   FilledButton.icon(
                     onPressed: _isSaving || isBlocked ? null : _save,
                     icon: _isSaving
@@ -793,43 +796,11 @@ class _DynamicRecordFormPageState extends ConsumerState<DynamicRecordFormPage> {
     );
   }
 
-  Widget _buildHeaderCard(AppSession session) {
-    final departmentName = session.isAdmin
-        ? _selectedDepartment?.name ?? '-'
-        : session.activeDepartment?.name ?? '-';
-
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              _isEditing
-                  ? 'Edición de registro'
-                  : 'Programación para el día siguiente',
-              style: Theme.of(
-                context,
-              ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 8),
-            Text('Departamento: $departmentName'),
-            Text(
-              'Usuario registrador: ${session.userName ?? '-'} (${session.userCode ?? '-'})',
-            ),
-            Text('Semana automática: ${_calculateIsoWeekNumber(_recordDate)}'),
-            Text('Estado local al guardar: ${SyncStatuses.pending}'),
-          ],
-        ),
-      ),
-    );
-  }
-
   Widget _buildBlockMessageCard(String blockMessage) {
     return Card(
       color: Theme.of(context).colorScheme.errorContainer,
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(14),
         child: Text(
           blockMessage,
           style: TextStyle(
@@ -857,10 +828,10 @@ class _DynamicRecordFormPageState extends ConsumerState<DynamicRecordFormPage> {
     final diningRoom = record?.diningRoom ?? _selectedDiningRoom?.name ?? '-';
 
     return Padding(
-      padding: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.only(bottom: 10),
       child: Card(
         child: Padding(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.all(14),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -928,6 +899,7 @@ class _DynamicRecordFormPageState extends ConsumerState<DynamicRecordFormPage> {
 
   Widget _buildAdminDepartmentField() {
     return DropdownButtonFormField<String>(
+      isExpanded: true,
       initialValue: _selectedDepartmentId,
       decoration: const InputDecoration(
         labelText: 'Departamento *',
@@ -973,7 +945,7 @@ class _DynamicRecordFormPageState extends ConsumerState<DynamicRecordFormPage> {
 
   Widget _buildDateField() {
     return Padding(
-      padding: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.only(bottom: 10),
       child: InkWell(
         onTap: _isFieldLockedForNormalEditing('recordDate') ? null : _pickDate,
         child: InputDecorator(
@@ -994,7 +966,7 @@ class _DynamicRecordFormPageState extends ConsumerState<DynamicRecordFormPage> {
     final locked = _isFieldLockedForNormalEditing('operatorId');
 
     return Padding(
-      padding: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.only(bottom: 10),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -1113,11 +1085,12 @@ class _DynamicRecordFormPageState extends ConsumerState<DynamicRecordFormPage> {
     final locked = _isFieldLockedForNormalEditing('taskId');
 
     return Padding(
-      padding: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.only(bottom: 10),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           DropdownButtonFormField<String>(
+            isExpanded: true,
             initialValue: _selectedTaskId,
             decoration: const InputDecoration(
               labelText: 'Labor *',
@@ -1182,7 +1155,7 @@ class _DynamicRecordFormPageState extends ConsumerState<DynamicRecordFormPage> {
   Widget _buildLocationSection() {
     if (_selectedCropId == null) {
       return const Padding(
-        padding: EdgeInsets.only(bottom: 16),
+        padding: EdgeInsets.only(bottom: 10),
         child: Card(
           child: Padding(
             padding: EdgeInsets.all(16),
@@ -1196,14 +1169,14 @@ class _DynamicRecordFormPageState extends ConsumerState<DynamicRecordFormPage> {
 
     if (_isLoadingLocations) {
       return const Padding(
-        padding: EdgeInsets.only(bottom: 16),
+        padding: EdgeInsets.only(bottom: 10),
         child: Center(child: CircularProgressIndicator()),
       );
     }
 
     if (_locationsForCrop.isEmpty) {
       return const Padding(
-        padding: EdgeInsets.only(bottom: 16),
+        padding: EdgeInsets.only(bottom: 10),
         child: Card(
           child: Padding(
             padding: EdgeInsets.all(16),
@@ -1215,11 +1188,31 @@ class _DynamicRecordFormPageState extends ConsumerState<DynamicRecordFormPage> {
 
     return Column(
       children: [
-        _buildLotField(),
-        _buildNetworkField(),
+        _buildTwoColumnRow(
+          left: _buildLotField(),
+          right: _buildNetworkField(),
+        ),
         _buildSectorsField(),
-        _buildHaRatioSummary(),
       ],
+    );
+  }
+
+  Widget _buildTwoColumnRow({required Widget left, required Widget right}) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        if (constraints.maxWidth < 340) {
+          return Column(children: [left, right]);
+        }
+
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(child: left),
+            const SizedBox(width: 10),
+            Expanded(child: right),
+          ],
+        );
+      },
     );
   }
 
@@ -1233,8 +1226,9 @@ class _DynamicRecordFormPageState extends ConsumerState<DynamicRecordFormPage> {
           ..sort(_compareMixedNumbers);
 
     return Padding(
-      padding: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.only(bottom: 10),
       child: DropdownButtonFormField<String>(
+        isExpanded: true,
         initialValue: lots.contains(_selectedLot) ? _selectedLot : null,
         decoration: const InputDecoration(
           labelText: 'Lote *',
@@ -1281,8 +1275,9 @@ class _DynamicRecordFormPageState extends ConsumerState<DynamicRecordFormPage> {
           ..sort(_compareMixedNumbers);
 
     return Padding(
-      padding: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.only(bottom: 10),
       child: DropdownButtonFormField<String>(
+        isExpanded: true,
         initialValue: networks.contains(_selectedNetwork)
             ? _selectedNetwork
             : null,
@@ -1339,7 +1334,7 @@ class _DynamicRecordFormPageState extends ConsumerState<DynamicRecordFormPage> {
 
     if (_selectedLot == null || _selectedNetwork == null) {
       return const Padding(
-        padding: EdgeInsets.only(bottom: 16),
+        padding: EdgeInsets.only(bottom: 10),
         child: Card(
           child: Padding(
             padding: EdgeInsets.all(16),
@@ -1351,7 +1346,7 @@ class _DynamicRecordFormPageState extends ConsumerState<DynamicRecordFormPage> {
 
     if (sectors.isEmpty) {
       return const Padding(
-        padding: EdgeInsets.only(bottom: 16),
+        padding: EdgeInsets.only(bottom: 10),
         child: Card(
           child: Padding(
             padding: EdgeInsets.all(16),
@@ -1362,7 +1357,7 @@ class _DynamicRecordFormPageState extends ConsumerState<DynamicRecordFormPage> {
     }
 
     return Padding(
-      padding: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.only(bottom: 10),
       child: Card(
         child: Column(
           children: [
@@ -1399,60 +1394,96 @@ class _DynamicRecordFormPageState extends ConsumerState<DynamicRecordFormPage> {
     );
   }
 
+  Widget _buildProductivitySection() {
+    final ratio = _calculatedRatio;
+
+    return _buildTwoColumnRow(
+      left: Column(
+        children: [
+          _buildScheduledWageField(),
+          _buildDiningRoomField(),
+        ],
+      ),
+      right: Column(
+        children: [
+          _buildReadonlyInput(
+            label: 'Ha total',
+            icon: Icons.landscape_outlined,
+            value: _totalHa.toStringAsFixed(2),
+          ),
+          _buildReadonlyInput(
+            label: 'Ratio',
+            icon: Icons.calculate_outlined,
+            value: ratio == null ? '-' : ratio.toStringAsFixed(2),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildReadonlyInput({
+    required String label,
+    required IconData icon,
+    required String value,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: InputDecorator(
+        decoration: InputDecoration(
+          labelText: label,
+          prefixIcon: Icon(icon),
+          enabled: false,
+        ),
+        child: Text(
+          value,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+      ),
+    );
+  }
+
   Widget _buildDiningRoomField() {
     if (_selectedCropId == null ||
         _selectedLot == null ||
         _selectedNetwork == null) {
-      return const Padding(
-        padding: EdgeInsets.only(bottom: 16),
-        child: Card(
-          child: Padding(
-            padding: EdgeInsets.all(16),
-            child: Text('Seleccione lote y red para filtrar comedores.'),
-          ),
-        ),
+      return _buildReadonlyInput(
+        label: 'Comedor',
+        icon: Icons.restaurant_outlined,
+        value: 'Seleccione lote y red',
       );
     }
 
     if (_isLoadingDiningRooms) {
-      return const Padding(
-        padding: EdgeInsets.only(bottom: 16),
-        child: Center(child: CircularProgressIndicator()),
+      return _buildReadonlyInput(
+        label: 'Comedor',
+        icon: Icons.restaurant_outlined,
+        value: 'Cargando...',
       );
     }
 
     if (_diningRooms.isEmpty) {
-      return const Padding(
-        padding: EdgeInsets.only(bottom: 16),
-        child: Card(
-          child: Padding(
-            padding: EdgeInsets.all(16),
-            child: Text(
-              'No hay comedor configurado para este cultivo/lote/red.',
-            ),
-          ),
-        ),
+      return _buildReadonlyInput(
+        label: 'Comedor',
+        icon: Icons.restaurant_outlined,
+        value: 'Sin comedor',
       );
     }
 
     if (_diningRooms.length == 1) {
       final diningRoom = _diningRooms.first;
 
-      return Padding(
-        padding: const EdgeInsets.only(bottom: 16),
-        child: Card(
-          child: ListTile(
-            leading: const Icon(Icons.restaurant_outlined),
-            title: const Text('Comedor sugerido'),
-            subtitle: Text(diningRoom.name),
-          ),
-        ),
+      return _buildReadonlyInput(
+        label: 'Comedor',
+        icon: Icons.restaurant_outlined,
+        value: diningRoom.name,
       );
     }
 
     return Padding(
-      padding: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.only(bottom: 10),
       child: DropdownButtonFormField<String>(
+        isExpanded: true,
         initialValue: _selectedDiningRoomId,
         decoration: const InputDecoration(
           labelText: 'Comedor *',
@@ -1484,37 +1515,9 @@ class _DynamicRecordFormPageState extends ConsumerState<DynamicRecordFormPage> {
     );
   }
 
-  Widget _buildHaRatioSummary() {
-    final ratio = _calculatedRatio;
-
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 16),
-      child: Card(
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Ha total: ${_totalHa.toStringAsFixed(2)}',
-                style: const TextStyle(fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                ratio == null
-                    ? 'Ratio: ingrese Jornal programado y seleccione sectores.'
-                    : 'Ratio: ${ratio.toStringAsFixed(2)}',
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
   Widget _buildScheduledWageField() {
     return Padding(
-      padding: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.only(bottom: 10),
       child: TextFormField(
         controller: _scheduledWageController,
         enabled: !_isFieldLockedForNormalEditing('scheduledWage'),
@@ -1548,7 +1551,7 @@ class _DynamicRecordFormPageState extends ConsumerState<DynamicRecordFormPage> {
 
   Widget _buildRealWageField() {
     return Padding(
-      padding: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.only(bottom: 10),
       child: TextFormField(
         controller: _realWageController,
         enabled: !_isFieldLockedForNormalEditing('realWage'),
@@ -1581,7 +1584,7 @@ class _DynamicRecordFormPageState extends ConsumerState<DynamicRecordFormPage> {
 
   Widget _buildObservationField() {
     return Padding(
-      padding: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.only(bottom: 10),
       child: TextFormField(
         controller: _observationController,
         enabled: !_isFieldLockedForNormalEditing('observation'),
@@ -1592,6 +1595,24 @@ class _DynamicRecordFormPageState extends ConsumerState<DynamicRecordFormPage> {
         ),
       ),
     );
+  }
+
+  String? _farmTypeForDepartment(Department? department) {
+    final name = department?.name.trim().toLowerCase() ?? '';
+
+    if (!name.contains('palto') || !name.contains('fundo')) {
+      return null;
+    }
+
+    if (name.contains('fundo 1') || name.contains('fundo1')) {
+      return 'Fundo 1';
+    }
+
+    if (name.contains('fundo 2') || name.contains('fundo2')) {
+      return 'Fundo 2';
+    }
+
+    return null;
   }
 
   String _formatRecordLotNetwork(

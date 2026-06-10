@@ -60,7 +60,7 @@ class _AgroLaboresAppState extends ConsumerState<AgroLaboresApp> {
             borderSide: BorderSide(color: colorScheme.outlineVariant),
           ),
           filled: true,
-          fillColor: colorScheme.surfaceContainerHighest.withOpacity(0.35),
+          fillColor: colorScheme.surfaceContainerHighest.withValues(alpha: 0.35),
         ),
         filledButtonTheme: FilledButtonThemeData(
           style: FilledButton.styleFrom(

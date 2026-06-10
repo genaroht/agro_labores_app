@@ -512,6 +512,7 @@ class _AdminReportsPageState extends ConsumerState<AdminReportsPage> {
 
   Widget _buildDepartmentDropdown() {
     return DropdownButtonFormField<String?>(
+      isExpanded: true,
       initialValue: _filters.departmentId,
       decoration: const InputDecoration(labelText: 'Departamento'),
       items: [
@@ -534,6 +535,7 @@ class _AdminReportsPageState extends ConsumerState<AdminReportsPage> {
 
   Widget _buildCropDropdown() {
     return DropdownButtonFormField<String?>(
+      isExpanded: true,
       initialValue: _filters.cropId,
       decoration: const InputDecoration(labelText: 'Cultivo'),
       items: [
@@ -556,6 +558,7 @@ class _AdminReportsPageState extends ConsumerState<AdminReportsPage> {
 
   Widget _buildTaskDropdown() {
     return DropdownButtonFormField<String?>(
+      isExpanded: true,
       initialValue: _filters.taskId,
       decoration: const InputDecoration(labelText: 'Labor'),
       items: [
@@ -580,6 +583,7 @@ class _AdminReportsPageState extends ConsumerState<AdminReportsPage> {
 
   Widget _buildLeaderDropdown() {
     return DropdownButtonFormField<String?>(
+      isExpanded: true,
       initialValue: _filters.leaderOperatorId,
       decoration: const InputDecoration(labelText: 'Líder'),
       items: [
@@ -604,6 +608,7 @@ class _AdminReportsPageState extends ConsumerState<AdminReportsPage> {
 
   Widget _buildCreatedByUserDropdown() {
     return DropdownButtonFormField<String?>(
+      isExpanded: true,
       initialValue: _filters.createdByUserId,
       decoration: const InputDecoration(labelText: 'Usuario registrador'),
       items: [
@@ -628,6 +633,7 @@ class _AdminReportsPageState extends ConsumerState<AdminReportsPage> {
 
   Widget _buildDiningRoomDropdown() {
     return DropdownButtonFormField<String?>(
+      isExpanded: true,
       initialValue: _filters.diningRoomId,
       decoration: const InputDecoration(labelText: 'Comedor'),
       items: [
@@ -659,6 +665,7 @@ class _AdminReportsPageState extends ConsumerState<AdminReportsPage> {
     final safeValue = values.contains(value) ? value : null;
 
     return DropdownButtonFormField<String?>(
+      isExpanded: true,
       initialValue: safeValue,
       decoration: InputDecoration(labelText: label),
       items: [

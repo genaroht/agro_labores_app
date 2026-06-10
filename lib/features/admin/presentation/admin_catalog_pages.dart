@@ -75,6 +75,7 @@ class _AdminDepartmentsPageState extends ConsumerState<AdminDepartmentsPage> {
                   ),
                   const SizedBox(height: 12),
                   DropdownButtonFormField<String>(
+      isExpanded: true,
                     initialValue: cropId,
                     decoration: const InputDecoration(
                       labelText: 'Cultivo principal',
@@ -131,17 +132,15 @@ class _AdminDepartmentsPageState extends ConsumerState<AdminDepartmentsPage> {
                 },
                 child: const Text('Guardar'),
               ),
-            ],
-          ),
-        );
-      },
-    );
+              ],
+            ),
+          );
+        },
+      );
 
     if (saved == true) {
       await _load();
     }
-
-    nameController.dispose();
   }
 
   Future<void> _delete(Department item) async {
@@ -299,6 +298,7 @@ class _AdminOperatorsPageState extends ConsumerState<AdminOperatorsPage> {
                     ),
                     const SizedBox(height: 12),
                     DropdownButtonFormField<String>(
+      isExpanded: true,
                       initialValue: departmentId,
                       decoration: const InputDecoration(
                         labelText: 'Departamento',
@@ -322,6 +322,7 @@ class _AdminOperatorsPageState extends ConsumerState<AdminOperatorsPage> {
                     ),
                     const SizedBox(height: 12),
                     DropdownButtonFormField<String>(
+      isExpanded: true,
                       initialValue: positionId,
                       decoration: const InputDecoration(
                         labelText: 'Cargo de la persona',
@@ -397,9 +398,6 @@ class _AdminOperatorsPageState extends ConsumerState<AdminOperatorsPage> {
     if (saved == true) {
       await _load();
     }
-
-    codeController.dispose();
-    nameController.dispose();
   }
 
   Future<void> _delete(FarmOperator item) async {
@@ -604,8 +602,6 @@ class _AdminCropsPageState extends ConsumerState<AdminCropsPage> {
     if (saved == true) {
       await _load();
     }
-
-    nameController.dispose();
   }
 
   Future<void> _delete(Crop item) async {
@@ -689,12 +685,14 @@ class _AdminTasksPageState extends ConsumerState<AdminTasksPage> {
 
   Future<void> _openForm([FarmTask? item]) async {
     final repository = ref.read(adminRepositoryProvider);
-    final codeController = TextEditingController(text: item?.code ?? '');
+    String? departmentId = item?.departmentId ?? _firstActiveDepartmentId();
+    final codeController = TextEditingController(
+      text: item?.code ?? _prefixForDepartment(departmentId),
+    );
     final nameController = TextEditingController(text: item?.name ?? '');
     final detailController = TextEditingController(
       text: item?.defaultDetail ?? '',
     );
-    String? departmentId = item?.departmentId ?? _firstActiveDepartmentId();
     var isActive = item?.isActive ?? true;
 
     final saved = await showDialog<bool>(
@@ -714,6 +712,7 @@ class _AdminTasksPageState extends ConsumerState<AdminTasksPage> {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       DropdownButtonFormField<String>(
+      isExpanded: true,
                         initialValue: departmentId,
                         decoration: const InputDecoration(
                           labelText: 'Departamento *',
@@ -732,7 +731,17 @@ class _AdminTasksPageState extends ConsumerState<AdminTasksPage> {
                             )
                             .toList(),
                         onChanged: (value) {
-                          setDialogState(() => departmentId = value);
+                          setDialogState(() {
+                            departmentId = value;
+                            final prefix = _prefixForDepartment(value);
+                            final current = codeController.text.trim();
+                            if (item == null &&
+                                (current.isEmpty ||
+                                    current == 'ARA-' ||
+                                    current == 'PAL-')) {
+                              codeController.text = prefix;
+                            }
+                          });
                         },
                       ),
                       const SizedBox(height: 12),
@@ -749,7 +758,7 @@ class _AdminTasksPageState extends ConsumerState<AdminTasksPage> {
                         textCapitalization: TextCapitalization.characters,
                         decoration: const InputDecoration(
                           labelText: 'Código de labor *',
-                          helperText: 'Debe ser único dentro del departamento',
+                          helperText: 'Se sugiere ARA- para arándano y PAL- para palto',
                         ),
                       ),
                       const SizedBox(height: 12),
@@ -820,10 +829,6 @@ class _AdminTasksPageState extends ConsumerState<AdminTasksPage> {
     if (saved == true) {
       await _load();
     }
-
-    codeController.dispose();
-    nameController.dispose();
-    detailController.dispose();
   }
 
   Future<void> _delete(FarmTask item) async {
@@ -880,6 +885,21 @@ class _AdminTasksPageState extends ConsumerState<AdminTasksPage> {
     }
 
     return null;
+  }
+
+  String _prefixForDepartment(String? id) {
+    final department = _departmentById(id);
+    final cropName = _cropName(department?.cropId)?.toLowerCase() ?? '';
+
+    if (cropName.contains('arandano') || cropName.contains('arándano')) {
+      return 'ARA-';
+    }
+
+    if (cropName.contains('palto')) {
+      return 'PAL-';
+    }
+
+    return '';
   }
 
   String _departmentName(String? id) {
@@ -972,6 +992,7 @@ class _AdminDiningRoomsPageState extends ConsumerState<AdminDiningRoomsPage> {
                     ),
                     const SizedBox(height: 12),
                     DropdownButtonFormField<String>(
+      isExpanded: true,
                       initialValue: cropId,
                       decoration: const InputDecoration(labelText: 'Cultivo *'),
                       items: _crops
@@ -1056,10 +1077,6 @@ class _AdminDiningRoomsPageState extends ConsumerState<AdminDiningRoomsPage> {
     if (saved == true) {
       await _load();
     }
-
-    nameController.dispose();
-    lotController.dispose();
-    networkController.dispose();
   }
 
   Future<void> _delete(DiningRoom item) async {
@@ -1163,6 +1180,7 @@ class _AdminLocationsPageState extends ConsumerState<AdminLocationsPage> {
   Future<void> _openForm([LocationEntry? item]) async {
     final repository = ref.read(adminRepositoryProvider);
     String? cropId = item?.cropId ?? _firstActiveCropId();
+    String? farmType = item?.farmType;
     final lotController = TextEditingController(text: item?.lot ?? '');
     final networkController = TextEditingController(text: item?.network ?? '');
     final sectorController = TextEditingController(text: item?.sector ?? '');
@@ -1176,112 +1194,154 @@ class _AdminLocationsPageState extends ConsumerState<AdminLocationsPage> {
       context: context,
       builder: (context) {
         return StatefulBuilder(
-          builder: (context, setDialogState) => AlertDialog(
-            title: Text(item == null ? 'Nueva ubicación' : 'Editar ubicación'),
-            content: SizedBox(
-              width: 420,
-              child: SingleChildScrollView(
-                child: Column(
-                  children: [
-                    DropdownButtonFormField<String>(
-                      initialValue: cropId,
-                      decoration: const InputDecoration(labelText: 'Cultivo'),
-                      items: _crops
-                          .map(
-                            (crop) => DropdownMenuItem(
-                              value: crop.id,
-                              child: Text(crop.name),
+          builder: (context, setDialogState) {
+            final selectedCrop = _cropById(cropId);
+            final showsFarmType = _isPaltoCrop(selectedCrop);
+
+            return AlertDialog(
+              title: Text(item == null ? 'Nueva ubicación' : 'Editar ubicación'),
+              content: SizedBox(
+                width: 420,
+                child: SingleChildScrollView(
+                  child: Column(
+                    children: [
+                      DropdownButtonFormField<String>(
+                        isExpanded: true,
+                        initialValue: cropId,
+                        decoration: const InputDecoration(labelText: 'Cultivo'),
+                        items: _crops
+                            .map(
+                              (crop) => DropdownMenuItem(
+                                value: crop.id,
+                                child: Text(crop.name),
+                              ),
+                            )
+                            .toList(),
+                        onChanged: (value) {
+                          setDialogState(() {
+                            cropId = value;
+                            if (!_isPaltoCrop(_cropById(value))) {
+                              farmType = null;
+                            }
+                          });
+                        },
+                      ),
+                      if (showsFarmType) ...[
+                        const SizedBox(height: 12),
+                        DropdownButtonFormField<String>(
+                          isExpanded: true,
+                          initialValue: farmType,
+                          decoration: const InputDecoration(
+                            labelText: 'Tipo de fundo',
+                            helperText:
+                                'Solo aplica a Labores Palto - Fundo 1/2',
+                          ),
+                          items: const [
+                            DropdownMenuItem(
+                              value: 'Fundo 1',
+                              child: Text('Fundo 1'),
                             ),
-                          )
-                          .toList(),
-                      onChanged: (value) {
-                        setDialogState(() => cropId = value);
-                      },
-                    ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: lotController,
-                      decoration: const InputDecoration(labelText: 'Lote'),
-                    ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: networkController,
-                      decoration: const InputDecoration(labelText: 'Red'),
-                    ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: sectorController,
-                      decoration: const InputDecoration(labelText: 'Sector'),
-                    ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: haController,
-                      keyboardType: const TextInputType.numberWithOptions(
-                        decimal: true,
+                            DropdownMenuItem(
+                              value: 'Fundo 2',
+                              child: Text('Fundo 2'),
+                            ),
+                          ],
+                          onChanged: (value) {
+                            setDialogState(() => farmType = value);
+                          },
+                        ),
+                      ],
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: lotController,
+                        decoration: const InputDecoration(labelText: 'Lote'),
                       ),
-                      decoration: const InputDecoration(labelText: 'Ha'),
-                    ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: diningController,
-                      decoration: const InputDecoration(
-                        labelText: 'Comedor sugerido',
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: networkController,
+                        decoration: const InputDecoration(labelText: 'Red'),
                       ),
-                    ),
-                    const SizedBox(height: 12),
-                    SwitchListTile(
-                      title: const Text('Activo'),
-                      value: isActive,
-                      onChanged: (value) {
-                        setDialogState(() => isActive = value);
-                      },
-                    ),
-                  ],
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: sectorController,
+                        decoration: const InputDecoration(labelText: 'Sector'),
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: haController,
+                        keyboardType: const TextInputType.numberWithOptions(
+                          decimal: true,
+                        ),
+                        decoration: const InputDecoration(labelText: 'Ha'),
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: diningController,
+                        decoration: const InputDecoration(
+                          labelText: 'Comedor sugerido',
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      SwitchListTile(
+                        title: const Text('Activo'),
+                        value: isActive,
+                        onChanged: (value) {
+                          setDialogState(() => isActive = value);
+                        },
+                      ),
+                    ],
+                  ),
                 ),
               ),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.of(context).pop(false),
-                child: const Text('Cancelar'),
-              ),
-              FilledButton(
-                onPressed: () async {
-                  try {
-                    final ha = double.tryParse(
-                      haController.text.replaceAll(',', '.'),
-                    );
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(false),
+                  child: const Text('Cancelar'),
+                ),
+                FilledButton(
+                  onPressed: () async {
+                    try {
+                      final ha = double.tryParse(
+                        haController.text.replaceAll(',', '.'),
+                      );
 
-                    if (ha == null) {
-                      throw Exception('Ingrese Ha válida.');
-                    }
+                      if (ha == null) {
+                        throw Exception('Ingrese Ha válida.');
+                      }
 
-                    await repository.saveLocation(
-                      existing: item,
-                      cropId: cropId ?? '',
-                      lot: lotController.text,
-                      network: networkController.text,
-                      sector: sectorController.text,
-                      ha: ha,
-                      suggestedDiningRoom: diningController.text.trim().isEmpty
-                          ? null
-                          : diningController.text.trim(),
-                      isActive: isActive,
-                    );
+                      if (showsFarmType && farmType == null) {
+                        throw Exception('Seleccione tipo de fundo.');
+                      }
 
-                    if (context.mounted) {
-                      Navigator.of(context).pop(true);
+                      await repository.saveLocation(
+                        existing: item,
+                        cropId: cropId ?? '',
+                        lot: lotController.text,
+                        network: networkController.text,
+                        sector: sectorController.text,
+                        farmType: showsFarmType ? farmType : null,
+                        ha: ha,
+                        suggestedDiningRoom:
+                            diningController.text.trim().isEmpty
+                            ? null
+                            : diningController.text.trim(),
+                        isActive: isActive,
+                      );
+
+                      if (context.mounted) {
+                        Navigator.of(context).pop(true);
+                      }
+                    } catch (error) {
+                      if (context.mounted) {
+                        _showError(context, error);
+                      }
                     }
-                  } catch (error) {
-                    if (context.mounted) {
-                      _showError(context, error);
-                    }
-                  }
-                },
-                child: const Text('Guardar'),
-              ),
-            ],
-          ),
+                  },
+                  child: const Text('Guardar'),
+                ),
+              ],
+            );
+          },
         );
       },
     );
@@ -1289,12 +1349,6 @@ class _AdminLocationsPageState extends ConsumerState<AdminLocationsPage> {
     if (saved == true) {
       await _load();
     }
-
-    lotController.dispose();
-    networkController.dispose();
-    sectorController.dispose();
-    haController.dispose();
-    diningController.dispose();
   }
 
   Future<void> _delete(LocationEntry item) async {
@@ -1315,7 +1369,7 @@ class _AdminLocationsPageState extends ConsumerState<AdminLocationsPage> {
               child: ListTile(
                 leading: Icon(item.isActive ? Icons.map_outlined : Icons.block),
                 title: Text(
-                  '${_cropName(item.cropId)} | ${AgroLocalValueFormatters.compactLot(item.lot)} | ${AgroLocalValueFormatters.compactNetwork(item.network)} | ${AgroLocalValueFormatters.compactSector(item.sector)}',
+                  '${_cropName(item.cropId)} | ${item.farmType ?? 'Todos'} | ${AgroLocalValueFormatters.compactLot(item.lot)} | ${AgroLocalValueFormatters.compactNetwork(item.network)} | ${AgroLocalValueFormatters.compactSector(item.sector)}',
                 ),
                 subtitle: Text(
                   'Ha: ${item.ha.toStringAsFixed(2)} | Comedor sugerido: ${item.suggestedDiningRoom ?? '-'} | ${item.isActive ? 'Activo' : 'Inactivo'}',
@@ -1339,6 +1393,24 @@ class _AdminLocationsPageState extends ConsumerState<AdminLocationsPage> {
     }
 
     return null;
+  }
+
+  Crop? _cropById(String? id) {
+    if (id == null) {
+      return null;
+    }
+
+    for (final crop in _crops) {
+      if (crop.id == id) {
+        return crop;
+      }
+    }
+
+    return null;
+  }
+
+  bool _isPaltoCrop(Crop? crop) {
+    return crop?.name.trim().toLowerCase().contains('palto') ?? false;
   }
 
   String _cropName(String id) {
@@ -1433,6 +1505,7 @@ class _EditDeleteActions extends StatelessWidget {
     );
   }
 }
+
 
 void _showError(BuildContext context, Object error) {
   ScaffoldMessenger.of(context).showSnackBar(

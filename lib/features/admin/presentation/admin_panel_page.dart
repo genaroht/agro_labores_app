@@ -51,6 +51,12 @@ class AdminPanelPage extends ConsumerWidget {
                 route: '/admin/users',
               ),
               _AdminCard(
+                icon: Icons.manage_accounts_outlined,
+                title: 'Cargos / accesos',
+                subtitle: 'Crear accesos de administrador o supervisor',
+                route: '/admin/roles',
+              ),
+              _AdminCard(
                 icon: Icons.badge_outlined,
                 title: 'Operarios / Personas',
                 subtitle: 'Gestionar personas, códigos, departamentos y cargos',
@@ -126,15 +132,31 @@ class AdminPanelPage extends ConsumerWidget {
   }
 }
 
-class _AdminAppBar extends StatelessWidget implements PreferredSizeWidget {
+class _AdminAppBar extends ConsumerWidget implements PreferredSizeWidget {
   const _AdminAppBar();
 
   @override
   Size get preferredSize => const Size.fromHeight(kToolbarHeight);
 
   @override
-  Widget build(BuildContext context) {
-    return AppBar(title: const Text('Panel Admin'));
+  Widget build(BuildContext context, WidgetRef ref) {
+    return AppBar(
+      title: const Text('Panel Admin'),
+      actions: [
+        IconButton(
+          tooltip: 'Sincronizar',
+          onPressed: () => context.push('/sync'),
+          icon: const Icon(Icons.sync),
+        ),
+        IconButton(
+          tooltip: 'Cerrar sesión',
+          onPressed: () async {
+            await ref.read(sessionProvider.notifier).logout();
+          },
+          icon: const Icon(Icons.logout),
+        ),
+      ],
+    );
   }
 }
 

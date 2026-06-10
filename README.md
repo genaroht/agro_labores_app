@@ -17,6 +17,8 @@ App Flutter offline-first para registro de labores agrícolas, personas/operario
 ```bash
 flutter pub get
 flutter pub run build_runner build --delete-conflicting-outputs
+flutter run
+# Opcional: forzar la semilla aunque no estés en debug
 flutter run --dart-define=ENABLE_DEV_SEED=true
 ```
 

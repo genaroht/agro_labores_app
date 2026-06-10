@@ -254,6 +254,7 @@ class Locations extends Table {
   TextColumn get lot => text()();
   TextColumn get network => text()();
   TextColumn get sector => text()();
+  TextColumn get farmType => text().nullable()();
   RealColumn get ha => real()();
   TextColumn get suggestedDiningRoom => text().nullable()();
   BoolColumn get isActive => boolean().withDefault(const Constant(true))();
@@ -491,7 +492,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase([QueryExecutor? executor]) : super(executor ?? _openConnection());
 
   @override
-  int get schemaVersion => 2;
+  int get schemaVersion => 3;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -502,6 +503,9 @@ class AppDatabase extends _$AppDatabase {
     onUpgrade: (m, from, to) async {
       if (from < 2) {
         await _upgradeFrom1To2(m);
+      }
+      if (from < 3) {
+        await m.addColumn(locations, locations.farmType);
       }
     },
     beforeOpen: (details) async {
@@ -650,7 +654,7 @@ class AppDatabase extends _$AppDatabase {
       'CREATE INDEX IF NOT EXISTS idx_tasks_department_crop_active ON tasks(department_id, crop_id, is_active, deleted_at)',
     );
     await customStatement(
-      'CREATE INDEX IF NOT EXISTS idx_locations_crop_lot_network ON locations(crop_id, lot, network, sector, is_active, deleted_at)',
+      'CREATE INDEX IF NOT EXISTS idx_locations_crop_lot_network ON locations(crop_id, farm_type, lot, network, sector, is_active, deleted_at)',
     );
     await customStatement(
       'CREATE INDEX IF NOT EXISTS idx_dining_rooms_crop_lot_network ON dining_rooms(crop_id, lot, network, is_active, deleted_at)',
@@ -797,6 +801,20 @@ class AppDatabase extends _$AppDatabase {
         ),
       );
 
+      // Garantiza que el usuario local de desarrollo pueda volver a iniciar
+      // sesión aunque la base SQLite previa tenga otro PIN, esté inactivo
+      // o haya quedado marcado como eliminado.
+      await (update(users)..where((tbl) => tbl.code.equals('999999'))).write(
+        UsersCompanion(
+          fullName: const Value('Administrador'),
+          passwordPin: const Value('123456'),
+          roleId: const Value('role_admin'),
+          isActive: const Value(true),
+          deletedAt: const Value<DateTime?>(null),
+          updatedAt: Value(DateTime.now()),
+        ),
+      );
+
       await into(operators).insertOnConflictUpdate(
         OperatorsCompanion.insert(
           id: 'op_ramos',
@@ -861,6 +879,7 @@ class AppDatabase extends _$AppDatabase {
           lot: '16',
           network: '5',
           sector: '55',
+          farmType: const Value('Fundo 1'),
           ha: 1.80,
           suggestedDiningRoom: const Value('Comedor Palto 16'),
         ),
@@ -870,6 +889,7 @@ class AppDatabase extends _$AppDatabase {
           lot: '16',
           network: '5',
           sector: '56',
+          farmType: const Value('Fundo 1'),
           ha: 0.39,
           suggestedDiningRoom: const Value('Comedor Palto 16'),
         ),
@@ -879,6 +899,7 @@ class AppDatabase extends _$AppDatabase {
           lot: '16',
           network: '5',
           sector: '57',
+          farmType: const Value('Fundo 2'),
           ha: 2.82,
           suggestedDiningRoom: const Value('Comedor Palto 16'),
         ),
@@ -983,19 +1004,33 @@ class AppDatabase extends _$AppDatabase {
   }
 
   Future<List<LocationEntry>> getLocationsByCrop(String cropId) {
-    return (select(locations)
-          ..where(
-            (tbl) =>
-                tbl.cropId.equals(cropId) &
-                tbl.isActive.equals(true) &
-                tbl.deletedAt.isNull(),
-          )
-          ..orderBy([
-            (tbl) => OrderingTerm.asc(tbl.lot),
-            (tbl) => OrderingTerm.asc(tbl.network),
-            (tbl) => OrderingTerm.asc(tbl.sector),
-          ]))
-        .get();
+    return getLocationsByCropAndFarmType(cropId: cropId);
+  }
+
+  Future<List<LocationEntry>> getLocationsByCropAndFarmType({
+    required String cropId,
+    String? farmType,
+  }) {
+    final query = select(locations)
+      ..where(
+        (tbl) =>
+            tbl.cropId.equals(cropId) &
+            tbl.isActive.equals(true) &
+            tbl.deletedAt.isNull(),
+      )
+      ..orderBy([
+        (tbl) => OrderingTerm.asc(tbl.lot),
+        (tbl) => OrderingTerm.asc(tbl.network),
+        (tbl) => OrderingTerm.asc(tbl.sector),
+      ]);
+
+    final cleanFarmType = farmType?.trim();
+
+    if (cleanFarmType != null && cleanFarmType.isNotEmpty) {
+      query.where((tbl) => tbl.farmType.equals(cleanFarmType));
+    }
+
+    return query.get();
   }
 
   Future<List<DiningRoom>> getActiveDiningRoomsByCropLotNetwork({

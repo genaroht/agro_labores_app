@@ -4790,6 +4790,17 @@ class $LocationsTable extends Locations
     type: DriftSqlType.string,
     requiredDuringInsert: true,
   );
+  static const VerificationMeta _farmTypeMeta = const VerificationMeta(
+    'farmType',
+  );
+  @override
+  late final GeneratedColumn<String> farmType = GeneratedColumn<String>(
+    'farm_type',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
   static const VerificationMeta _haMeta = const VerificationMeta('ha');
   @override
   late final GeneratedColumn<double> ha = GeneratedColumn<double>(
@@ -4880,6 +4891,7 @@ class $LocationsTable extends Locations
     lot,
     network,
     sector,
+    farmType,
     ha,
     suggestedDiningRoom,
     isActive,
@@ -4942,6 +4954,12 @@ class $LocationsTable extends Locations
       );
     } else if (isInserting) {
       context.missing(_sectorMeta);
+    }
+    if (data.containsKey('farm_type')) {
+      context.handle(
+        _farmTypeMeta,
+        farmType.isAcceptableOrUnknown(data['farm_type']!, _farmTypeMeta),
+      );
     }
     if (data.containsKey('ha')) {
       context.handle(_haMeta, ha.isAcceptableOrUnknown(data['ha']!, _haMeta));
@@ -5020,6 +5038,10 @@ class $LocationsTable extends Locations
         DriftSqlType.string,
         data['${effectivePrefix}sector'],
       )!,
+      farmType: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}farm_type'],
+      ),
       ha: attachedDatabase.typeMapping.read(
         DriftSqlType.double,
         data['${effectivePrefix}ha'],
@@ -5064,6 +5086,7 @@ class LocationEntry extends DataClass implements Insertable<LocationEntry> {
   final String lot;
   final String network;
   final String sector;
+  final String? farmType;
   final double ha;
   final String? suggestedDiningRoom;
   final bool isActive;
@@ -5078,6 +5101,7 @@ class LocationEntry extends DataClass implements Insertable<LocationEntry> {
     required this.lot,
     required this.network,
     required this.sector,
+    this.farmType,
     required this.ha,
     this.suggestedDiningRoom,
     required this.isActive,
@@ -5097,6 +5121,9 @@ class LocationEntry extends DataClass implements Insertable<LocationEntry> {
     map['lot'] = Variable<String>(lot);
     map['network'] = Variable<String>(network);
     map['sector'] = Variable<String>(sector);
+    if (!nullToAbsent || farmType != null) {
+      map['farm_type'] = Variable<String>(farmType);
+    }
     map['ha'] = Variable<double>(ha);
     if (!nullToAbsent || suggestedDiningRoom != null) {
       map['suggested_dining_room'] = Variable<String>(suggestedDiningRoom);
@@ -5121,6 +5148,9 @@ class LocationEntry extends DataClass implements Insertable<LocationEntry> {
       lot: Value(lot),
       network: Value(network),
       sector: Value(sector),
+      farmType: farmType == null && nullToAbsent
+          ? const Value.absent()
+          : Value(farmType),
       ha: Value(ha),
       suggestedDiningRoom: suggestedDiningRoom == null && nullToAbsent
           ? const Value.absent()
@@ -5147,6 +5177,7 @@ class LocationEntry extends DataClass implements Insertable<LocationEntry> {
       lot: serializer.fromJson<String>(json['lot']),
       network: serializer.fromJson<String>(json['network']),
       sector: serializer.fromJson<String>(json['sector']),
+      farmType: serializer.fromJson<String?>(json['farmType']),
       ha: serializer.fromJson<double>(json['ha']),
       suggestedDiningRoom: serializer.fromJson<String?>(
         json['suggestedDiningRoom'],
@@ -5168,6 +5199,7 @@ class LocationEntry extends DataClass implements Insertable<LocationEntry> {
       'lot': serializer.toJson<String>(lot),
       'network': serializer.toJson<String>(network),
       'sector': serializer.toJson<String>(sector),
+      'farmType': serializer.toJson<String?>(farmType),
       'ha': serializer.toJson<double>(ha),
       'suggestedDiningRoom': serializer.toJson<String?>(suggestedDiningRoom),
       'isActive': serializer.toJson<bool>(isActive),
@@ -5185,6 +5217,7 @@ class LocationEntry extends DataClass implements Insertable<LocationEntry> {
     String? lot,
     String? network,
     String? sector,
+    Value<String?> farmType = const Value.absent(),
     double? ha,
     Value<String?> suggestedDiningRoom = const Value.absent(),
     bool? isActive,
@@ -5199,6 +5232,7 @@ class LocationEntry extends DataClass implements Insertable<LocationEntry> {
     lot: lot ?? this.lot,
     network: network ?? this.network,
     sector: sector ?? this.sector,
+    farmType: farmType.present ? farmType.value : this.farmType,
     ha: ha ?? this.ha,
     suggestedDiningRoom: suggestedDiningRoom.present
         ? suggestedDiningRoom.value
@@ -5217,6 +5251,7 @@ class LocationEntry extends DataClass implements Insertable<LocationEntry> {
       lot: data.lot.present ? data.lot.value : this.lot,
       network: data.network.present ? data.network.value : this.network,
       sector: data.sector.present ? data.sector.value : this.sector,
+      farmType: data.farmType.present ? data.farmType.value : this.farmType,
       ha: data.ha.present ? data.ha.value : this.ha,
       suggestedDiningRoom: data.suggestedDiningRoom.present
           ? data.suggestedDiningRoom.value
@@ -5240,6 +5275,7 @@ class LocationEntry extends DataClass implements Insertable<LocationEntry> {
           ..write('lot: $lot, ')
           ..write('network: $network, ')
           ..write('sector: $sector, ')
+          ..write('farmType: $farmType, ')
           ..write('ha: $ha, ')
           ..write('suggestedDiningRoom: $suggestedDiningRoom, ')
           ..write('isActive: $isActive, ')
@@ -5259,6 +5295,7 @@ class LocationEntry extends DataClass implements Insertable<LocationEntry> {
     lot,
     network,
     sector,
+    farmType,
     ha,
     suggestedDiningRoom,
     isActive,
@@ -5277,6 +5314,7 @@ class LocationEntry extends DataClass implements Insertable<LocationEntry> {
           other.lot == this.lot &&
           other.network == this.network &&
           other.sector == this.sector &&
+          other.farmType == this.farmType &&
           other.ha == this.ha &&
           other.suggestedDiningRoom == this.suggestedDiningRoom &&
           other.isActive == this.isActive &&
@@ -5293,6 +5331,7 @@ class LocationsCompanion extends UpdateCompanion<LocationEntry> {
   final Value<String> lot;
   final Value<String> network;
   final Value<String> sector;
+  final Value<String?> farmType;
   final Value<double> ha;
   final Value<String?> suggestedDiningRoom;
   final Value<bool> isActive;
@@ -5308,6 +5347,7 @@ class LocationsCompanion extends UpdateCompanion<LocationEntry> {
     this.lot = const Value.absent(),
     this.network = const Value.absent(),
     this.sector = const Value.absent(),
+    this.farmType = const Value.absent(),
     this.ha = const Value.absent(),
     this.suggestedDiningRoom = const Value.absent(),
     this.isActive = const Value.absent(),
@@ -5324,6 +5364,7 @@ class LocationsCompanion extends UpdateCompanion<LocationEntry> {
     required String lot,
     required String network,
     required String sector,
+    this.farmType = const Value.absent(),
     required double ha,
     this.suggestedDiningRoom = const Value.absent(),
     this.isActive = const Value.absent(),
@@ -5345,6 +5386,7 @@ class LocationsCompanion extends UpdateCompanion<LocationEntry> {
     Expression<String>? lot,
     Expression<String>? network,
     Expression<String>? sector,
+    Expression<String>? farmType,
     Expression<double>? ha,
     Expression<String>? suggestedDiningRoom,
     Expression<bool>? isActive,
@@ -5361,6 +5403,7 @@ class LocationsCompanion extends UpdateCompanion<LocationEntry> {
       if (lot != null) 'lot': lot,
       if (network != null) 'network': network,
       if (sector != null) 'sector': sector,
+      if (farmType != null) 'farm_type': farmType,
       if (ha != null) 'ha': ha,
       if (suggestedDiningRoom != null)
         'suggested_dining_room': suggestedDiningRoom,
@@ -5380,6 +5423,7 @@ class LocationsCompanion extends UpdateCompanion<LocationEntry> {
     Value<String>? lot,
     Value<String>? network,
     Value<String>? sector,
+    Value<String?>? farmType,
     Value<double>? ha,
     Value<String?>? suggestedDiningRoom,
     Value<bool>? isActive,
@@ -5396,6 +5440,7 @@ class LocationsCompanion extends UpdateCompanion<LocationEntry> {
       lot: lot ?? this.lot,
       network: network ?? this.network,
       sector: sector ?? this.sector,
+      farmType: farmType ?? this.farmType,
       ha: ha ?? this.ha,
       suggestedDiningRoom: suggestedDiningRoom ?? this.suggestedDiningRoom,
       isActive: isActive ?? this.isActive,
@@ -5427,6 +5472,9 @@ class LocationsCompanion extends UpdateCompanion<LocationEntry> {
     }
     if (sector.present) {
       map['sector'] = Variable<String>(sector.value);
+    }
+    if (farmType.present) {
+      map['farm_type'] = Variable<String>(farmType.value);
     }
     if (ha.present) {
       map['ha'] = Variable<double>(ha.value);
@@ -5466,6 +5514,7 @@ class LocationsCompanion extends UpdateCompanion<LocationEntry> {
           ..write('lot: $lot, ')
           ..write('network: $network, ')
           ..write('sector: $sector, ')
+          ..write('farmType: $farmType, ')
           ..write('ha: $ha, ')
           ..write('suggestedDiningRoom: $suggestedDiningRoom, ')
           ..write('isActive: $isActive, ')
@@ -16083,6 +16132,7 @@ typedef $$LocationsTableCreateCompanionBuilder =
       required String lot,
       required String network,
       required String sector,
+      Value<String?> farmType,
       required double ha,
       Value<String?> suggestedDiningRoom,
       Value<bool> isActive,
@@ -16100,6 +16150,7 @@ typedef $$LocationsTableUpdateCompanionBuilder =
       Value<String> lot,
       Value<String> network,
       Value<String> sector,
+      Value<String?> farmType,
       Value<double> ha,
       Value<String?> suggestedDiningRoom,
       Value<bool> isActive,
@@ -16187,6 +16238,11 @@ class $$LocationsTableFilterComposer
 
   ColumnFilters<String> get sector => $composableBuilder(
     column: $table.sector,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get farmType => $composableBuilder(
+    column: $table.farmType,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -16308,6 +16364,11 @@ class $$LocationsTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<String> get farmType => $composableBuilder(
+    column: $table.farmType,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<double> get ha => $composableBuilder(
     column: $table.ha,
     builder: (column) => ColumnOrderings(column),
@@ -16390,6 +16451,9 @@ class $$LocationsTableAnnotationComposer
 
   GeneratedColumn<String> get sector =>
       $composableBuilder(column: $table.sector, builder: (column) => column);
+
+  GeneratedColumn<String> get farmType =>
+      $composableBuilder(column: $table.farmType, builder: (column) => column);
 
   GeneratedColumn<double> get ha =>
       $composableBuilder(column: $table.ha, builder: (column) => column);
@@ -16499,6 +16563,7 @@ class $$LocationsTableTableManager
                 Value<String> lot = const Value.absent(),
                 Value<String> network = const Value.absent(),
                 Value<String> sector = const Value.absent(),
+                Value<String?> farmType = const Value.absent(),
                 Value<double> ha = const Value.absent(),
                 Value<String?> suggestedDiningRoom = const Value.absent(),
                 Value<bool> isActive = const Value.absent(),
@@ -16514,6 +16579,7 @@ class $$LocationsTableTableManager
                 lot: lot,
                 network: network,
                 sector: sector,
+                farmType: farmType,
                 ha: ha,
                 suggestedDiningRoom: suggestedDiningRoom,
                 isActive: isActive,
@@ -16531,6 +16597,7 @@ class $$LocationsTableTableManager
                 required String lot,
                 required String network,
                 required String sector,
+                Value<String?> farmType = const Value.absent(),
                 required double ha,
                 Value<String?> suggestedDiningRoom = const Value.absent(),
                 Value<bool> isActive = const Value.absent(),
@@ -16546,6 +16613,7 @@ class $$LocationsTableTableManager
                 lot: lot,
                 network: network,
                 sector: sector,
+                farmType: farmType,
                 ha: ha,
                 suggestedDiningRoom: suggestedDiningRoom,
                 isActive: isActive,
